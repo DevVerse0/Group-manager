@@ -1,0 +1,1239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GroupBot v8 | Elite Command Center</title>
+<meta name="description" content="Advanced Telegram Group Management Dashboard">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#050814;--surface:rgba(15,20,40,0.8);--surface2:rgba(255,255,255,0.04);--primary:#6366f1;--primary-light:#818cf8;--primary-glow:rgba(99,102,241,0.25);--accent:#f43f5e;--accent-glow:rgba(244,63,94,0.2);--cyan:#06b6d4;--success:#10b981;--warning:#f59e0b;--text:#f1f5f9;--text-muted:#64748b;--border:rgba(255,255,255,0.07);--radius:20px;--shadow:0 8px 32px rgba(0,0,0,0.4);}
+*{box-sizing:border-box;margin:0;padding:0;}
+html{scroll-behavior:smooth;}
+body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden;}
+body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse 80% 60% at 10% 0%,rgba(99,102,241,0.12) 0%,transparent 60%),radial-gradient(ellipse 60% 50% at 90% 100%,rgba(244,63,94,0.08) 0%,transparent 50%);pointer-events:none;z-index:0;}
+.layout{display:flex;min-height:100vh;position:relative;z-index:1;}
+.sidebar{width:260px;flex-shrink:0;background:rgba(10,14,30,0.95);border-right:1px solid var(--border);padding:28px 16px;display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh;overflow-y:auto;}
+.sidebar-logo{padding:8px 12px 22px;border-bottom:1px solid var(--border);margin-bottom:10px;}
+.sidebar-logo h1{font-size:1.35rem;font-weight:800;background:linear-gradient(135deg,var(--primary-light),var(--cyan));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
+.sidebar-logo span{font-size:0.75rem;color:var(--text-muted);}
+.nav-section{font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:1.2px;padding:12px 14px 4px;font-weight:600;}
+.nav-item{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:12px;color:var(--text-muted);font-size:0.88rem;font-weight:500;cursor:pointer;border:none;background:none;width:100%;text-align:left;transition:all 0.18s;}
+.nav-item:hover{background:var(--surface2);color:var(--text);}
+.nav-item.active{background:var(--primary-glow);color:var(--primary-light);border:1px solid rgba(99,102,241,0.2);}
+.nav-icon{font-size:1rem;width:20px;text-align:center;}
+.sidebar-status{margin-top:auto;padding:14px;background:var(--surface2);border-radius:14px;border:1px solid var(--border);}
+.status-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:8px;}
+.status-dot.online{background:var(--success);box-shadow:0 0 8px var(--success);animation:pulse 2s infinite;}
+.status-dot.offline{background:var(--accent);}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.5;}}
+.main{flex:1;padding:32px;overflow-y:auto;}
+.page-header{margin-bottom:28px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px;}
+.page-title{font-size:1.9rem;font-weight:800;background:linear-gradient(to right,#fff,#94a3b8);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
+.page-subtitle{color:var(--text-muted);font-size:0.88rem;margin-top:4px;}
+.section{display:none;}.section.active{display:block;}
+.toast-area{position:fixed;top:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:10px;max-width:360px;}
+.toast{padding:14px 18px;border-radius:14px;font-size:0.88rem;font-weight:500;display:flex;align-items:center;gap:10px;animation:slideIn 0.3s ease;box-shadow:var(--shadow);}
+.toast-success{background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.3);color:#34d399;}
+.toast-error{background:rgba(244,63,94,0.15);border:1px solid rgba(244,63,94,0.3);color:#fb7185;}
+.toast-info{background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);color:var(--primary-light);}
+@keyframes slideIn{from{transform:translateX(110%);opacity:0;}to{transform:translateX(0);opacity:1;}}
+@keyframes fadeOut{to{opacity:0;transform:translateX(110%);}}
+.card{background:var(--surface);backdrop-filter:blur(20px);border:1px solid var(--border);border-radius:var(--radius);padding:26px;box-shadow:var(--shadow);}
+.card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;}
+.card-title{font-size:1rem;font-weight:700;display:flex;align-items:center;gap:10px;}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-bottom:24px;}
+.stat-card{background:var(--surface2);border:1px solid var(--border);border-radius:18px;padding:20px 16px;text-align:center;transition:transform 0.2s,box-shadow 0.2s;cursor:default;position:relative;overflow:hidden;}
+.stat-card::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,transparent 60%,rgba(255,255,255,0.02));pointer-events:none;}
+.stat-card:hover{transform:translateY(-3px);box-shadow:0 12px 32px rgba(0,0,0,0.3);}
+.stat-card .s-icon{font-size:1.5rem;margin-bottom:8px;}
+.stat-card .s-val{font-size:2rem;font-weight:800;color:var(--primary-light);line-height:1;}
+.stat-card .s-lbl{font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-top:6px;}
+.stat-card.c-cyan .s-val{color:var(--cyan);}
+.stat-card.c-green .s-val{color:var(--success);}
+.stat-card.c-yellow .s-val{color:var(--warning);}
+.stat-card.c-red .s-val{color:var(--accent);}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:22px;}
+.grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:22px;}
+.section-gap{display:flex;flex-direction:column;gap:22px;}
+.form-group{margin-bottom:16px;}
+label{display:block;margin-bottom:6px;font-size:0.82rem;color:var(--text-muted);font-weight:500;}
+input,select,textarea{width:100%;padding:11px 15px;background:rgba(0,0,0,0.4);border:1px solid var(--border);border-radius:11px;color:var(--text);font-family:inherit;font-size:0.92rem;transition:border-color 0.2s,box-shadow 0.2s;}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-glow);}
+input::placeholder,textarea::placeholder{color:var(--text-muted);}
+select option{background:#0f1428;}
+.inline-form{display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end;}
+.btn{padding:10px 20px;border-radius:11px;border:none;font-weight:600;font-size:0.88rem;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:7px;transition:all 0.18s;text-decoration:none;white-space:nowrap;}
+.btn-primary{background:linear-gradient(135deg,var(--primary),var(--primary-light));color:#fff;box-shadow:0 4px 20px var(--primary-glow);}
+.btn-primary:hover{transform:translateY(-2px);box-shadow:0 8px 28px var(--primary-glow);}
+.btn-danger{background:linear-gradient(135deg,#be123c,var(--accent));color:#fff;box-shadow:0 4px 16px var(--accent-glow);}
+.btn-danger:hover{transform:translateY(-2px);}
+.btn-ghost{background:var(--surface2);color:var(--text);border:1px solid var(--border);}
+.btn-ghost:hover{background:rgba(255,255,255,0.08);border-color:rgba(255,255,255,0.15);}
+.btn-success{background:linear-gradient(135deg,#059669,var(--success));color:#fff;}
+.btn-warning{background:linear-gradient(135deg,#d97706,var(--warning));color:#fff;}
+.btn-cyan{background:linear-gradient(135deg,#0891b2,var(--cyan));color:#fff;}
+.btn-sm{padding:6px 13px;font-size:0.8rem;}
+.btn-full{width:100%;}
+.btn-icon{padding:7px;min-width:34px;min-height:34px;border-radius:9px;}
+.table-wrap{overflow-x:auto;border-radius:13px;border:1px solid var(--border);}
+table{width:100%;border-collapse:collapse;}
+thead th{padding:12px 15px;color:var(--text-muted);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;border-bottom:1px solid var(--border);background:rgba(0,0,0,0.2);white-space:nowrap;}
+tbody td{padding:12px 15px;border-bottom:1px solid var(--border);font-size:0.88rem;vertical-align:middle;}
+tbody tr:last-child td{border-bottom:none;}
+tbody tr:hover{background:rgba(255,255,255,0.02);}
+.badge{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:100px;font-size:0.73rem;font-weight:600;}
+.badge-primary{background:rgba(99,102,241,0.15);color:var(--primary-light);}
+.badge-success{background:rgba(16,185,129,0.12);color:var(--success);}
+.badge-warning{background:rgba(245,158,11,0.12);color:var(--warning);}
+.badge-danger{background:rgba(244,63,94,0.12);color:var(--accent);}
+.badge-muted{background:var(--surface2);color:var(--text-muted);}
+.badge-cyan{background:rgba(6,182,212,0.12);color:var(--cyan);}
+code{background:rgba(99,102,241,0.1);color:var(--primary-light);padding:2px 7px;border-radius:5px;font-size:0.82rem;font-family:'Courier New',monospace;}
+.log-box{background:rgba(0,0,0,0.3);border-radius:13px;border:1px solid var(--border);max-height:340px;overflow-y:auto;}
+.log-entry{display:flex;justify-content:space-between;align-items:flex-start;padding:10px 15px;border-bottom:1px solid var(--border);gap:14px;font-size:0.84rem;}
+.log-entry:last-child{border-bottom:none;}
+.log-text{color:var(--text);flex:1;line-height:1.4;}
+.log-time{color:var(--text-muted);font-size:0.73rem;white-space:nowrap;font-family:'Courier New',monospace;}
+.warn-bar-bg{height:5px;background:rgba(255,255,255,0.06);border-radius:100px;overflow:hidden;margin-top:5px;}
+.warn-bar-fill{height:100%;border-radius:100px;background:linear-gradient(to right,var(--warning),var(--accent));}
+.warn-w-0{width:0%}.warn-w-33{width:33%}.warn-w-66{width:66%}.warn-w-100{width:100%}
+.rep-val{font-weight:bold}.rep-val.g{color:var(--success)}.rep-val.b{color:var(--danger)}.rep-val.n{color:var(--text-muted)}
+.empty{text-align:center;padding:40px 20px;color:var(--text-muted);}
+.empty .e-icon{font-size:2.5rem;margin-bottom:10px;opacity:0.4;}
+.info-row{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border);font-size:0.88rem;}
+.info-row:last-child{border-bottom:none;}
+.info-label{color:var(--text-muted);font-size:0.8rem;}
+/* Antispam mini toggle */
+.mini-toggle{position:relative;width:40px;height:22px;flex-shrink:0;cursor:pointer;}
+.mini-toggle input{opacity:0;width:0;height:0;}
+.mini-slider{position:absolute;inset:0;background:rgba(255,255,255,0.1);border-radius:100px;transition:0.3s;border:1px solid var(--border);}
+.mini-slider:before{content:'';position:absolute;height:16px;width:16px;left:2px;bottom:2px;background:#fff;border-radius:50%;transition:0.3s;}
+input:checked+.mini-slider{background:var(--success);border-color:var(--success);}
+input:checked+.mini-slider:before{transform:translateX(18px);}
+/* Action pill buttons */
+.action-pills{display:flex;gap:6px;flex-wrap:wrap;}
+/* Divider */
+.divider{height:1px;background:var(--border);margin:16px 0;}
+/* Msg link result box */
+.result-box{margin-top:12px;padding:12px;border-radius:11px;font-size:0.85rem;display:none;}
+.result-ok{background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);color:var(--success);}
+.result-err{background:rgba(244,63,94,0.08);border:1px solid rgba(244,63,94,0.2);color:var(--accent);}
+::-webkit-scrollbar{width:4px;height:4px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:10px;}
+@media(max-width:960px){.sidebar{display:none;}.main{padding:18px;}.grid-2,.grid-3{grid-template-columns:1fr;}.stats-grid{grid-template-columns:repeat(2,1fr);}}
+</style>
+</head>
+<body>
+
+<div class="toast-area" id="toastArea"></div>
+
+<div class="layout">
+  <!-- SIDEBAR -->
+  <nav class="sidebar">
+    <div class="sidebar-logo">
+      <h1>⚡ GroupBot v8</h1>
+      <span>Elite Command Center</span>
+    </div>
+
+    <div class="nav-section">Dashboard</div>
+    <button class="nav-item active" onclick="showSection('overview')" id="nav-overview"><span class="nav-icon">📊</span>Overview</button>
+    <button class="nav-item" onclick="showSection('logs')" id="nav-logs"><span class="nav-icon">📜</span>Live Logs</button>
+
+    <div class="nav-section">Data</div>
+    <button class="nav-item" onclick="showSection('users')" id="nav-users"><span class="nav-icon">👥</span>Users</button>
+    <button class="nav-item" onclick="showSection('groups')" id="nav-groups"><span class="nav-icon">🏘️</span>Groups</button>
+
+    <div class="nav-section">Control</div>
+    <button class="nav-item" onclick="showSection('tools')" id="nav-tools"><span class="nav-icon">🛠️</span>Remote Tools</button>
+    <button class="nav-item" onclick="showSection('msglink')" id="nav-msglink"><span class="nav-icon">🔗</span>Message Control</button>
+    <button class="nav-item" onclick="showSection('moderation')" id="nav-moderation"><span class="nav-icon">🔇</span>Bans & Mutes</button>
+    <button class="nav-item" onclick="showSection('automod')" id="nav-automod"><span class="nav-icon">🤬</span>Filters & Bad Words</button>
+    <button class="nav-item" onclick="showSection('broadcast')" id="nav-broadcast"><span class="nav-icon">📢</span>Broadcast</button>
+
+    <div class="nav-section">System</div>
+    <button class="nav-item" onclick="showSection('settings')" id="nav-settings"><span class="nav-icon">⚙️</span>Settings</button>
+
+    <div class="sidebar-status">
+      <div style="font-size:0.75rem;color:var(--text-muted);font-weight:600;margin-bottom:8px;">BOT STATUS</div>
+      <div style="display:flex;align-items:center;font-size:0.86rem;font-weight:600;" id="sidebarStatus">
+        {% if config.is_running %}
+          <span class="status-dot online"></span>System Online
+        {% else %}
+          <span class="status-dot offline"></span>System Offline
+        {% endif %}
+      </div>
+      <div style="margin-top:10px;">
+        <form action="/api/toggle" method="POST">
+          <button type="submit" class="btn btn-full {% if config.is_running %}btn-danger{% else %}btn-primary{% endif %}" style="font-size:0.82rem;padding:9px;">
+            {% if config.is_running %}🛑 Stop Bot{% else %}🚀 Start Bot{% endif %}
+          </button>
+        </form>
+      </div>
+    </div>
+  </nav>
+
+  <!-- MAIN -->
+  <main class="main">
+
+    <!-- ── OVERVIEW ── -->
+    <section class="section active" id="section-overview">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Overview</div>
+          <div class="page-subtitle">Live intelligence — auto-refreshes every 30s</div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <a href="/api/download_database" class="btn btn-ghost">📥 Download Database (manager.db)</a>
+          <form action="/api/sync_data" method="POST" style="margin:0;">
+            <button type="submit" class="btn btn-ghost">🧠 Sync Intelligence</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card"><div class="s-icon">👥</div><div class="s-val" id="stat-users">{{ stats.total_users }}</div><div class="s-lbl">Users</div></div>
+        <div class="stat-card c-cyan"><div class="s-icon">🏘️</div><div class="s-val" id="stat-groups">{{ stats.total_groups }}</div><div class="s-lbl">Groups</div></div>
+        <div class="stat-card c-green"><div class="s-icon">💬</div><div class="s-val" id="stat-messages">{{ stats.total_messages }}</div><div class="s-lbl">Messages</div></div>
+        <div class="stat-card c-yellow"><div class="s-icon">🔍</div><div class="s-val" id="stat-filters">{{ stats.total_filters }}</div><div class="s-lbl">Filters</div></div>
+        <div class="stat-card c-red"><div class="s-icon">🚫</div><div class="s-val" id="stat-badwords">{{ stats.total_bad_words }}</div><div class="s-lbl">Bad Words</div></div>
+        <div class="stat-card"><div class="s-icon">⚠️</div><div class="s-val" id="stat-warned">{{ stats.total_warned_users }}</div><div class="s-lbl">Warned Users</div></div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">📜 Recent Activity</div>
+            <form action="/api/clear_logs" method="POST" style="margin:0;">
+              <button type="submit" class="btn btn-ghost btn-sm" onclick="return confirm('Clear all logs?')">🧹 Clear</button>
+            </form>
+          </div>
+          <div class="log-box" id="liveLogBox">
+            {% if logs %}
+              {% for log in logs %}
+              <div class="log-entry"><span class="log-text">{{ log.event }}</span><span class="log-time">{{ log.timestamp }}</span></div>
+              {% endfor %}
+            {% else %}
+              <div class="empty"><div class="e-icon">📭</div>No logs yet</div>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">⚠️ Warnings Board</div>
+            <span class="badge badge-warning">Top 10</span>
+          </div>
+          {% if warnings_board %}
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>User</th><th>ID</th><th>Warns</th><th></th></tr></thead>
+              <tbody>
+              {% for w in warnings_board %}
+              <tr>
+                <td style="font-weight:600;">{{ w.name }}</td>
+                <td><code>{{ w.user_id }}</code></td>
+                <td>
+                  <span class="badge {% if w.warnings >= 3 %}badge-danger{% elif w.warnings == 2 %}badge-warning{% else %}badge-primary{% endif %}">{{ w.warnings }}/3</span>
+                  <div class="warn-bar-bg"><div class="warn-bar-fill warn-w-{{ (w.warnings/3*100)|int }}"></div></div>
+                </td>
+                <td>
+                  <form action="/api/reset_warnings" method="POST" style="margin:0;">
+                    <input type="hidden" name="user_id" value="{{ w.user_id }}">
+                    <button class="btn btn-ghost btn-icon btn-sm" title="Reset">↺</button>
+                  </form>
+                </td>
+              </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <div class="empty"><div class="e-icon">✅</div>No warnings issued</div>
+          {% endif %}
+        </div>
+      </div>
+    </section>
+
+    <!-- ── USERS ── -->
+    <section class="section" id="section-users">
+      <div class="page-header">
+        <div><div class="page-title">Users Registry</div><div class="page-subtitle">{{ users|length }} registered users</div></div>
+      </div>
+      <div class="card" style="margin-bottom:20px;">
+        <div class="card-title" style="margin-bottom:16px;">➕ Add User Manually</div>
+        <form action="/api/manual_add" method="POST">
+          <input type="hidden" name="type" value="user">
+          <div class="inline-form">
+            <div class="form-group" style="margin:0;"><label>User ID</label><input type="text" name="id" placeholder="123456789" required></div>
+            <div class="form-group" style="margin:0;"><label>Display Name</label><input type="text" name="name" placeholder="John Doe"></div>
+            <button type="submit" class="btn btn-primary">Add</button>
+          </div>
+        </form>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">👥 All Users</div>
+          <form action="/" method="GET" style="display:flex;gap:8px;margin:0;">
+            <input type="text" name="search" placeholder="Search…" value="{{ search_query or '' }}" style="width:170px;padding:7px 12px;font-size:0.82rem;">
+            <button type="submit" class="btn btn-ghost btn-sm">Search</button>
+            {% if search_query %}<a href="/" class="btn btn-ghost btn-sm">Clear</a>{% endif %}
+          </form>
+        </div>
+        {% if users %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Name</th><th>User ID</th><th>Username</th><th>Rep</th><th>Banned</th><th>Warns</th><th>First Seen</th><th>Actions</th></tr></thead>
+            <tbody>
+            {% for uid, u in users.items() %}
+            <tr {% if u.is_banned %}style="background:rgba(255,50,50,0.05);"{% endif %}>
+              <td style="font-weight:600;">{{ u.name or 'Unknown' }}</td>
+              <td><code>{{ uid }}</code></td>
+              <td>{% if u.username %}<span class="badge badge-cyan">@{{ u.username }}</span>{% else %}<span style="color:var(--text-muted);">—</span>{% endif %}</td>
+              <td>
+                <div style="display:flex;align-items:center;gap:4px;">
+                  <form action="/api/remote_action" method="POST" style="margin:0;"><input type="hidden" name="action" value="repdown"><input type="hidden" name="user_id" value="{{ uid }}"><button class="btn btn-ghost btn-icon btn-sm" title="Rep -1">-</button></form>
+                  <span class="rep-val {% if u.reputation > 0 %}g{% elif u.reputation < 0 %}b{% else %}n{% endif %}">{{ u.reputation or 0 }}</span>
+                  <form action="/api/remote_action" method="POST" style="margin:0;"><input type="hidden" name="action" value="repup"><input type="hidden" name="user_id" value="{{ uid }}"><button class="btn btn-ghost btn-icon btn-sm" title="Rep +1">+</button></form>
+                </div>
+              </td>
+              <td>
+                {% if u.is_banned %}
+                  <span class="badge badge-danger">Banned ({{ u.banned_reason or 'Global' }})</span>
+                {% else %}
+                  <span class="badge badge-success">No</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if u.warnings and u.warnings > 0 %}
+                  <span class="badge {% if u.warnings >= 3 %}badge-danger{% elif u.warnings >= 2 %}badge-warning{% else %}badge-primary{% endif %}">{{ u.warnings }}/3</span>
+                {% else %}
+                  <span class="badge badge-success">Clean</span>
+                {% endif %}
+              </td>
+              <td style="color:var(--text-muted);font-size:0.8rem;">{{ u.first_seen or '—' }}</td>
+              <td>
+                <div class="action-pills">
+                  {% if u.warnings and u.warnings > 0 %}
+                  <form action="/api/reset_warnings" method="POST" style="margin:0;">
+                    <input type="hidden" name="user_id" value="{{ uid }}">
+                    <button class="btn btn-ghost btn-sm btn-icon" title="Reset warnings">↺</button>
+                  </form>
+                  {% endif %}
+                  {% if not u.is_banned %}
+                  <form action="/api/remote_action" method="POST" style="margin:0;" onsubmit="return confirm('Global ban {{ u.name }} everywhere?')">
+                    <input type="hidden" name="action" value="gban">
+                    <input type="hidden" name="user_id" value="{{ uid }}">
+                    <button class="btn btn-sm btn-warning" title="Global Ban">GBan</button>
+                  </form>
+                  {% else %}
+                  <form action="/api/remote_action" method="POST" style="margin:0;" onsubmit="return confirm('Global unban {{ u.name }}?')">
+                    <input type="hidden" name="action" value="ungban">
+                    <input type="hidden" name="user_id" value="{{ uid }}">
+                    <button class="btn btn-sm btn-success" title="Un-Global Ban">Un-GBan</button>
+                  </form>
+                  {% endif %}
+                  <form action="/api/delete_entry" method="POST" style="margin:0;" onsubmit="return confirm('Delete user?')">
+                    <input type="hidden" name="type" value="user">
+                    <input type="hidden" name="id" value="{{ uid }}">
+                    <button class="btn btn-sm btn-danger">Del</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="empty"><div class="e-icon">👤</div>No users registered yet</div>
+        {% endif %}
+      </div>
+    </section>
+
+    <!-- ── GROUPS ── -->
+    <section class="section" id="section-groups">
+      <div class="page-header">
+        <div><div class="page-title">Groups Registry</div><div class="page-subtitle">{{ groups|length }} managed groups</div></div>
+      </div>
+      <div class="grid-2" style="margin-bottom:20px;">
+        <div class="card">
+          <div class="card-title" style="margin-bottom:16px;">➕ Add Group Manually</div>
+          <form action="/api/manual_add" method="POST">
+            <input type="hidden" name="type" value="group">
+            <div class="form-group"><label>Group Chat ID</label><input type="text" name="id" placeholder="-1001234567890" required></div>
+            <div class="form-group"><label>Group Name (optional)</label><input type="text" name="name" placeholder="My Group"></div>
+            <button type="submit" class="btn btn-primary btn-full">Add Group</button>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-title" style="margin-bottom:16px;">🔍 Deep Scanner</div>
+          <form action="/api/scan_group" method="POST">
+            <div class="form-group"><label>Target Group ID</label><input type="text" name="group_id" placeholder="-1001234567890" required></div>
+            <button type="submit" class="btn btn-cyan btn-full">Scan &amp; Sync</button>
+          </form>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">🏘️ All Groups</div>
+          <span class="badge badge-primary">{{ groups|length }} groups</span>
+        </div>
+        {% if groups %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Name</th><th>Chat ID</th><th>Msgs</th><th>Members</th><th>Lang</th><th>Filters</th><th>Strict</th><th>Anti-Spam</th><th>Anti-Link</th><th>Last Active</th><th>Actions</th></tr></thead>
+            <tbody>
+            {% for gid, g in groups.items() %}
+            <tr>
+              <td style="font-weight:600;">{{ g.name or 'Unknown Group' }}</td>
+              <td><code>{{ gid }}</code></td>
+              <td><span class="badge badge-primary">{{ g.message_count or 0 }}</span></td>
+              <td>{{ g.member_count or 0 }}</td>
+              <td><span style="font-size:0.8rem;text-transform:uppercase;color:var(--primary);">{{ g.language or 'en' }}</span></td>
+              <td><span class="badge badge-muted">{{ g.filter_count or 0 }}</span></td>
+              <td>
+                {% if g.strict_mode %}
+                  <span class="badge badge-danger">On</span>
+                {% else %}
+                  <span class="badge badge-success">Off</span>
+                {% endif %}
+              </td>
+              <td>
+                <label class="mini-toggle" title="Toggle Anti-Spam" onclick="toggleAntispam('{{ gid }}', this)">
+                  <input type="checkbox" {% if g.antispam %}checked{% endif %} onclick="return false;">
+                  <span class="mini-slider"></span>
+                </label>
+              </td>
+              <td>
+                <label class="mini-toggle" title="Toggle Anti-Link" onclick="toggleAntilink('{{ gid }}', this)">
+                  <input type="checkbox" {% if g.antispam_auto_delete_links %}checked{% endif %} onclick="return false;">
+                  <span class="mini-slider"></span>
+                </label>
+              </td>
+              <td style="color:var(--text-muted);font-size:0.8rem;">{{ g.last_active or '—' }}</td>
+              <td>
+                <div class="action-pills">
+                  <button class="btn btn-ghost btn-sm" onclick="quickGroupMsg('{{ gid }}', '{{ g.name }}')" title="Send message">💬</button>
+                  <button class="btn btn-cyan btn-sm" onclick="openGroupManage('{{ gid }}', '{{ g.name|e }}')" title="Advanced Manage">⚙️</button>
+                  <button class="btn btn-warning btn-sm" onclick="quickLock('{{ gid }}', 'lock')" title="Lock group">🔒</button>
+                  <button class="btn btn-success btn-sm" onclick="quickLock('{{ gid }}', 'unlock')" title="Unlock group">🔓</button>
+                  <form action="/api/delete_entry" method="POST" style="margin:0;" onsubmit="return confirm('Delete this group record?')">
+                    <input type="hidden" name="type" value="group">
+                    <input type="hidden" name="id" value="{{ gid }}">
+                    <button class="btn btn-danger btn-sm">Del</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="empty"><div class="e-icon">🏘️</div>No groups registered yet</div>
+        {% endif %}
+      </div>
+    </section>
+
+    <!-- ── MESSAGE LINK CONTROL ── -->
+    <section class="section" id="section-msglink">
+      <div class="page-header">
+        <div><div class="page-title">Message Control</div><div class="page-subtitle">Delete, pin, or unpin any message using its Telegram link</div></div>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-title" style="margin-bottom:20px;">🔗 Message Link Actions</div>
+          <div class="form-group">
+            <label>Telegram Message Link</label>
+            <input type="text" id="msgLinkInput" placeholder="https://t.me/c/1234567890/42 or https://t.me/groupname/42">
+          </div>
+          <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:16px;">Paste the link to the message you want to control, then click an action below.</p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <button class="btn btn-danger" onclick="msgLinkAction('delete')">🗑️ Delete Message</button>
+            <button class="btn btn-warning" onclick="msgLinkAction('pin')">📌 Pin Message</button>
+            <button class="btn btn-ghost" onclick="msgLinkAction('unpin')">📌 Unpin Message</button>
+          </div>
+          <div id="msgLinkResult" class="result-box"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="margin-bottom:20px;">📨 Send to Group</div>
+          <div class="form-group">
+            <label>Target Group Chat ID</label>
+            <input type="text" id="grpMsgChatId" placeholder="-1001234567890">
+          </div>
+          <div class="form-group">
+            <label>Message (HTML supported: &lt;b&gt;, &lt;i&gt;, &lt;code&gt;, &lt;a&gt;)</label>
+            <textarea id="grpMsgText" rows="4" placeholder="Type your message here…"></textarea>
+          </div>
+          <button class="btn btn-primary btn-full" onclick="sendGroupMsg()">📨 Send Message</button>
+          <div id="grpMsgResult" class="result-box"></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:22px;">
+        <div class="card-title" style="margin-bottom:20px;">🔒 Group Lock / Unlock</div>
+        <div style="display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:end;">
+          <div class="form-group" style="margin:0;">
+            <label>Group Chat ID</label>
+            <input type="text" id="lockChatId" placeholder="-1001234567890">
+          </div>
+          <button class="btn btn-warning" onclick="doGroupLock('lock')">🔒 Lock Group</button>
+          <button class="btn btn-success" onclick="doGroupLock('unlock')">🔓 Unlock Group</button>
+        </div>
+        <div id="lockResult" class="result-box"></div>
+      </div>
+    </section>
+
+    <!-- ── REMOTE TOOLS ── -->
+    <section class="section" id="section-tools">
+      <div class="page-header">
+        <div><div class="page-title">Remote Tools</div><div class="page-subtitle">Execute moderation actions on any group remotely</div></div>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-title" style="margin-bottom:20px;">🛡️ Remote User Action</div>
+          <div class="form-group"><label>Group Chat ID</label><input type="text" id="ra-group" placeholder="-1001234567890"></div>
+          <div class="form-group"><label>Target User ID</label><input type="text" id="ra-user" placeholder="123456789"></div>
+          <div class="form-group">
+            <label>Action</label>
+            <select id="ra-action">
+              <option value="ban">🔨 Permanently Ban</option>
+              <option value="unban">🕊️ Revoke Ban (Unban)</option>
+              <option value="kick">👢 Kick (Soft Ban)</option>
+              <option value="mute">🔇 Mute User</option>
+              <option value="unmute">🔊 Unmute User</option>
+              <option value="warn">⚠️ Add Warning</option>
+              <option value="promote">⏫ Promote to Admin</option>
+              <option value="demote">⏬ Demote from Admin</option>
+            </select>
+          </div>
+          <button class="btn btn-danger btn-full" onclick="doRemoteAction()">⚡ Execute Action</button>
+          <div id="raResult" class="result-box"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="margin-bottom:20px;">🩺 Bot Health</div>
+          <div class="section-gap">
+            <div style="background:var(--surface2);border-radius:11px;padding:14px;border:1px solid var(--border);">
+              <div class="info-label" style="margin-bottom:6px;">ENGINE STATUS</div>
+              <div style="font-size:1.05rem;font-weight:700;" id="healthBot">
+                {% if config.is_running %}<span style="color:var(--success);">✅ Running</span>{% else %}<span style="color:var(--accent);">❌ Stopped</span>{% endif %}
+              </div>
+            </div>
+            <div style="background:var(--surface2);border-radius:11px;padding:14px;border:1px solid var(--border);">
+              <div class="info-label" style="margin-bottom:6px;">OWNER</div>
+              <div style="font-weight:600;">@{{ config.owner_username or 'Not Set' }}</div>
+            </div>
+            <div style="background:var(--surface2);border-radius:11px;padding:14px;border:1px solid var(--border);">
+              <div class="info-label" style="margin-bottom:6px;">TOKEN</div>
+              <div style="font-weight:600;">
+                {% if config.bot_token %}<span style="color:var(--success);">✅ Configured</span>{% else %}<span style="color:var(--accent);">⚠️ Not Set</span>{% endif %}
+              </div>
+            </div>
+            <button class="btn btn-ghost" onclick="refreshHealth()">🔄 Refresh Status</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── BROADCAST ── -->
+    <section class="section" id="section-broadcast">
+      <div class="page-header">
+        <div><div class="page-title">Global Broadcast</div><div class="page-subtitle">Transmit messages to all users or groups</div></div>
+      </div>
+      <div class="card" style="max-width:680px;">
+        <div class="card-title" style="margin-bottom:20px;">📢 Compose Broadcast</div>
+        <form action="/api/broadcast" method="POST">
+          <div class="form-group">
+            <label>Message (HTML: &lt;b&gt;, &lt;i&gt;, &lt;code&gt;, &lt;a&gt;)</label>
+            <textarea name="message" rows="5" placeholder="Type your broadcast…" required></textarea>
+          </div>
+          <div class="form-group">
+            <label>Recipient Target</label>
+            <select name="target">
+              <option value="groups">📡 All Groups ({{ stats.total_groups }} targets)</option>
+              <option value="users">👤 All Users ({{ stats.total_users }} targets)</option>
+            </select>
+          </div>
+          <button type="submit" class="btn btn-primary btn-full">🚀 Transmit Broadcast</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ── LOGS ── -->
+    <section class="section" id="section-logs">
+      <div class="page-header">
+        <div><div class="page-title">Operational Logs</div><div class="page-subtitle">System event history</div></div>
+        <div style="display:flex;gap:10px;">
+          <button class="btn btn-ghost" onclick="refreshLogs()">🔄 Refresh</button>
+          <form action="/api/clear_logs" method="POST" style="margin:0;">
+            <button type="submit" class="btn btn-ghost" onclick="return confirm('Clear all logs?')">🧹 Clear</button>
+          </form>
+        </div>
+      </div>
+      <div class="card">
+        <div class="log-box" id="fullLogBox" style="max-height:600px;">
+          {% if logs %}
+            {% for log in logs %}
+            <div class="log-entry"><span class="log-text">{{ log.event }}</span><span class="log-time">{{ log.timestamp }}</span></div>
+            {% endfor %}
+          {% else %}
+            <div class="empty"><div class="e-icon">📭</div>No logs yet</div>
+          {% endif %}
+        </div>
+      </div>
+    </section>
+
+    <!-- ── BANS & MUTES ── -->
+    <section class="section" id="section-moderation">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Bans &amp; Mutes Manager</div>
+          <div class="page-subtitle">Track and revoke active temporary/permanent restrictions</div>
+        </div>
+        <button class="btn btn-ghost" onclick="refreshModerations()">🔄 Refresh Lists</button>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🔇 Active Mutes</div>
+            <span class="badge badge-primary" id="muteCount">0</span>
+          </div>
+          <div class="table-wrap">
+            <table id="mutesTable">
+              <thead><tr><th>User</th><th>Group</th><th>Reason</th><th>Muted By</th><th>Expires</th><th>Action</th></tr></thead>
+              <tbody id="mutesTableBody">
+                <tr><td colspan="6" class="empty">Click refresh to load...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🚫 Active Bans</div>
+            <span class="badge badge-danger" id="banCount">0</span>
+          </div>
+          <div class="table-wrap">
+            <table id="bansTable">
+              <thead><tr><th>User</th><th>Group</th><th>Reason</th><th>Banned By</th><th>Expires</th><th>Action</th></tr></thead>
+              <tbody id="bansTableBody">
+                <tr><td colspan="6" class="empty">Click refresh to load...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── AUTO-MOD ── -->
+    <section class="section" id="section-automod">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Auto-Mod Command Center</div>
+          <div class="page-subtitle">Manage triggers, custom auto-replies, and blacklisted words</div>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:22px;">
+        <div class="form-group" style="margin:0;">
+          <label>Select Target Group</label>
+          <select id="automodGroupSelect" onchange="onAutomodGroupChange(this.value)">
+            <option value="">-- Choose a group --</option>
+            {% for gid, g in groups.items() %}
+              <option value="{{ gid }}">{{ g.name or 'Group' }} ({{ gid }})</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div id="automodContent" style="display:none;" class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🤬 Blacklisted Words</div>
+          </div>
+          <div class="form-group">
+            <div style="display:flex;gap:10px;margin-bottom:15px;">
+              <input type="text" id="newBadWordInput" placeholder="Add bad word...">
+              <button class="btn btn-primary btn-sm" onclick="addBadWord()">Add</button>
+            </div>
+          </div>
+          <div style="max-height:350px;overflow-y:auto;background:rgba(0,0,0,0.3);border-radius:10px;border:1px solid var(--border);" id="badWordsList">
+            <!-- Dynamically loaded bad words -->
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🔍 Custom Auto-Reply Filters</div>
+          </div>
+          <div class="form-group" style="background:var(--surface2);padding:14px;border-radius:12px;border:1px solid var(--border);margin-bottom:15px;">
+            <div style="font-weight:600;font-size:0.85rem;margin-bottom:10px;">➕ Create New Filter</div>
+            <div class="form-group"><label>Trigger Keyword</label><input type="text" id="filterTriggerInput" placeholder="e.g. support"></div>
+            <div class="form-group"><label>Bot Reply Text</label><textarea id="filterTextResponseInput" rows="2" placeholder="Text response..."></textarea></div>
+            <button class="btn btn-cyan btn-sm btn-full" onclick="addFilter()">Create Filter</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Trigger</th><th>Response</th><th>Action</th></tr></thead>
+              <tbody id="filtersTableBody">
+                <!-- Dynamically loaded filters -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div id="automodPlaceholder" class="card empty"><div class="e-icon">🏘️</div>Select a group from the dropdown to manage its configuration</div>
+    </section>
+
+    <!-- ── SETTINGS ── -->
+    <section class="section" id="section-settings">
+      <div class="page-header">
+        <div><div class="page-title">Settings</div><div class="page-subtitle">Bot credentials &amp; configuration</div></div>
+      </div>
+      <div class="section-gap" style="max-width:680px;">
+        <div class="card">
+          <div class="card-title" style="margin-bottom:18px;">🔑 Bot Credentials</div>
+          <form action="/api/settings" method="POST">
+            <div class="form-group"><label>Bot Token</label><input type="password" name="bot_token" value="{{ config.bot_token }}" placeholder="1234567890:ABCdef…" autocomplete="new-password"></div>
+            <div class="form-group"><label>Owner Username (without @)</label><input type="text" name="owner_username" value="{{ config.owner_username }}" placeholder="myusername"></div>
+            <div class="form-group"><label>📢 Support Channel Username (without @)</label><input type="text" name="support_channel" value="{{ config.support_channel or '' }}" placeholder="mysupportchannel"><small style="color:var(--text-muted);font-size:0.78rem;display:block;margin-top:5px;">Shown as a button in /start. Leave blank to hide.</small></div>
+            <button type="submit" class="btn btn-primary">💾 Save &amp; Apply</button>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-title" style="margin-bottom:14px;">📡 API Endpoints</div>
+          <div style="display:flex;flex-direction:column;gap:8px;font-size:0.83rem;">
+            <div class="info-row"><span class="info-label">GET /api/stats</span><code>Live stats JSON</code></div>
+            <div class="info-row"><span class="info-label">GET /api/logs</span><code>Recent logs JSON</code></div>
+            <div class="info-row"><span class="info-label">GET /api/groups</span><code>All groups JSON</code></div>
+            <div class="info-row"><span class="info-label">GET /api/users</span><code>All users JSON</code></div>
+            <div class="info-row"><span class="info-label">POST /api/message_action</span><code>delete/pin/unpin</code></div>
+            <div class="info-row"><span class="info-label">POST /api/antispam_toggle</span><code>Toggle per group</code></div>
+            <div class="info-row"><span class="info-label">POST /api/group_message</span><code>Send to group</code></div>
+            <div class="info-row"><span class="info-label">POST /api/group_lock</span><code>lock/unlock group</code></div>
+            <div class="info-row"><span class="info-label">POST /api/remote_action</span><code>ban/kick/mute/warn</code></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title" style="margin-bottom:14px;">⚠️ Danger Zone</div>
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <form action="/api/clear_logs" method="POST" style="margin:0;">
+              <button type="submit" class="btn btn-ghost btn-full" style="color:var(--warning);" onclick="return confirm('Clear all logs?')">🧹 Clear All Logs</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- Quick Group Message Modal -->
+<div id="qMsgModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:10000;align-items:center;justify-content:center;">
+  <div style="background:#0d1128;border:1px solid var(--border);border-radius:var(--radius);padding:28px;max-width:480px;width:90%;">
+    <div style="font-weight:700;font-size:1.1rem;margin-bottom:16px;" id="qMsgTitle">Send Message</div>
+    <input type="hidden" id="qMsgChatId">
+    <div class="form-group"><label>Message</label><textarea id="qMsgText" rows="4" placeholder="Type your message…"></textarea></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button class="btn btn-ghost" onclick="closeQMsg()">Cancel</button>
+      <button class="btn btn-primary" onclick="sendQMsg()">📨 Send</button>
+    </div>
+  </div>
+</div>
+
+<!-- Group Management Modal -->
+<div id="gManageModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:10000;align-items:center;justify-content:center;overflow-y:auto;padding:20px;">
+  <div style="background:#0d1128;border:1px solid var(--border);border-radius:var(--radius);padding:28px;max-width:550px;width:100%;box-shadow:var(--shadow);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+      <div style="font-weight:700;font-size:1.2rem;" id="gmTitle">Manage Group</div>
+      <button class="btn btn-ghost btn-icon btn-sm" onclick="closeGroupManage()">✕</button>
+    </div>
+    
+    <input type="hidden" id="gmChatId">
+
+    <div class="form-group">
+      <label>Group Title</label>
+      <div style="display:flex;gap:10px;">
+        <input type="text" id="gmInputTitle" placeholder="New Title">
+        <button class="btn btn-cyan btn-sm" onclick="updateGmTitle()">Update</button>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Group Description</label>
+      <textarea id="gmInputDesc" rows="3" placeholder="New Description"></textarea>
+      <button class="btn btn-cyan btn-sm btn-full" style="margin-top:8px;" onclick="updateGmDesc()">Update Description</button>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="form-group">
+      <label>Invite Link</label>
+      <div style="background:rgba(0,0,0,0.3);padding:12px;border-radius:10px;border:1px solid var(--border);margin-bottom:10px;word-break:break-all;font-family:monospace;font-size:0.85rem;" id="gmInviteLink">
+        Click 'Fetch' to see link
+      </div>
+      <div style="display:flex;gap:10px;">
+        <button class="btn btn-ghost btn-sm" onclick="fetchGmLink()">🔗 Fetch Link</button>
+        <button class="btn btn-warning btn-sm" onclick="createGmLink()">➕ Create New Link</button>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+    
+    <div style="display:flex;justify-content:flex-end;">
+      <button class="btn btn-primary" onclick="closeGroupManage()">Done</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── TOAST ──
+(function(){
+  const p=new URLSearchParams(window.location.search);
+  const s=p.get('success'),e=p.get('error');
+  if(s) showToast('✅ '+s.replace(/_/g,' '),'success');
+  if(e) showToast('❌ '+e.replace(/_/g,' '),'error');
+  if(s||e){const u=new URL(location.href);u.searchParams.delete('success');u.searchParams.delete('error');history.replaceState({},'',u);}
+})();
+
+function showToast(msg,type='success'){
+  const area=document.getElementById('toastArea');
+  const t=document.createElement('div');
+  t.className='toast toast-'+type;
+  t.textContent=msg;
+  area.appendChild(t);
+  setTimeout(()=>{t.style.animation='fadeOut 0.4s ease forwards';setTimeout(()=>t.remove(),400);},5000);
+}
+
+// ── NAV ──
+function showSection(name){
+  document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  const sec=document.getElementById('section-'+name);
+  const nav=document.getElementById('nav-'+name);
+  if(sec)sec.classList.add('active');
+  if(nav)nav.classList.add('active');
+  if(name === 'moderation') refreshModerations();
+}
+
+// ── LIVE STATS ──
+async function refreshStats(){
+  try{
+    const d=await (await fetch('/api/stats')).json();
+    const set=(id,v)=>{const el=document.getElementById(id);if(el&&el.textContent!=v)el.textContent=v;};
+    set('stat-users',d.total_users);set('stat-groups',d.total_groups);
+    set('stat-messages',d.total_messages);set('stat-filters',d.total_filters);
+    set('stat-badwords',d.total_bad_words);set('stat-warned',d.total_warned_users||0);
+    const sb=document.getElementById('sidebarStatus');
+    if(sb)sb.innerHTML=d.is_running?'<span class="status-dot online"></span>System Online':'<span class="status-dot offline"></span>System Offline';
+  }catch(e){}
+}
+
+// ── LIVE LOGS ──
+async function refreshLogs(){
+  try{
+    const logs=await (await fetch('/api/logs?limit=50')).json();
+    const html=logs.length
+      ?logs.map(l=>`<div class="log-entry"><span class="log-text">${esc(l.event)}</span><span class="log-time">${l.timestamp}</span></div>`).join('')
+      :'<div class="empty"><div class="e-icon">📭</div>No logs yet</div>';
+    ['liveLogBox','fullLogBox'].forEach(id=>{const b=document.getElementById(id);if(b)b.innerHTML=html;});
+  }catch(e){}
+}
+
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+async function refreshHealth(){
+  try{
+    const d=await (await fetch('/api/stats')).json();
+    const el=document.getElementById('healthBot');
+    if(el)el.innerHTML=d.is_running?'<span style="color:var(--success);">✅ Running</span>':'<span style="color:var(--accent);">❌ Stopped</span>';
+  }catch(e){}
+}
+
+// ── MESSAGE LINK CONTROL ──
+async function msgLinkAction(action){
+  const link=document.getElementById('msgLinkInput').value.trim();
+  const res=document.getElementById('msgLinkResult');
+  if(!link){showToast('Please enter a message link','error');return;}
+  res.style.display='none';
+  const fd=new FormData();fd.append('message_link',link);fd.append('action',action);
+  try{
+    const d=await (await fetch('/api/message_action',{method:'POST',body:fd})).json();
+    res.style.display='block';
+    if(d.ok){res.className='result-box result-ok';res.textContent='✅ Message '+d.action+' successfully!';}
+    else{res.className='result-box result-err';res.textContent='❌ '+d.error;}
+  }catch(e){res.style.display='block';res.className='result-box result-err';res.textContent='❌ Request failed';}
+}
+
+// ── SEND TO GROUP ──
+async function sendGroupMsg(){
+  const chatId=document.getElementById('grpMsgChatId').value.trim();
+  const msg=document.getElementById('grpMsgText').value.trim();
+  const res=document.getElementById('grpMsgResult');
+  if(!chatId||!msg){showToast('Fill in all fields','error');return;}
+  res.style.display='none';
+  const fd=new FormData();fd.append('chat_id',chatId);fd.append('message',msg);
+  try{
+    const d=await (await fetch('/api/group_message',{method:'POST',body:fd})).json();
+    res.style.display='block';
+    if(d.ok){res.className='result-box result-ok';res.textContent='✅ Message sent!';}
+    else{res.className='result-box result-err';res.textContent='❌ '+d.error;}
+  }catch(e){res.style.display='block';res.className='result-box result-err';res.textContent='❌ Request failed';}
+}
+
+// ── GROUP LOCK/UNLOCK ──
+async function doGroupLock(action){
+  const chatId=document.getElementById('lockChatId').value.trim();
+  const res=document.getElementById('lockResult');
+  if(!chatId){showToast('Enter a Group Chat ID','error');return;}
+  res.style.display='none';
+  const fd=new FormData();fd.append('chat_id',chatId);fd.append('action',action);
+  try{
+    const d=await (await fetch('/api/group_lock',{method:'POST',body:fd})).json();
+    res.style.display='block';
+    if(d.ok){res.className='result-box result-ok';res.textContent='✅ Group '+d.action+'!';}
+    else{res.className='result-box result-err';res.textContent='❌ '+d.error;}
+  }catch(e){res.style.display='block';res.className='result-box result-err';res.textContent='❌ Request failed';}
+}
+
+// ── ANTISPAM PER GROUP TOGGLE ──
+async function toggleAntispam(chatId, labelEl){
+  const fd=new FormData();fd.append('chat_id',chatId);
+  try{
+    const d=await (await fetch('/api/antispam_toggle',{method:'POST',body:fd})).json();
+    if(d.ok){
+      const chk=labelEl.querySelector('input');
+      if(chk)chk.checked=d.antispam;
+      showToast(`Anti-Spam ${d.antispam?'Enabled ✅':'Disabled ❌'}`,'success');
+    } else showToast('❌ '+d.error,'error');
+  }catch(e){showToast('❌ Request failed','error');}
+}
+
+// ── REMOTE USER ACTION ──
+async function doRemoteAction(){
+  const group=document.getElementById('ra-group').value.trim();
+  const user=document.getElementById('ra-user').value.trim();
+  const action=document.getElementById('ra-action').value;
+  const res=document.getElementById('raResult');
+  if(!group||!user){showToast('Enter Group ID and User ID','error');return;}
+  if(!confirm(`Execute "${action}" on user ${user} in group ${group}?`))return;
+  res.style.display='none';
+  const fd=new FormData();fd.append('group_id',group);fd.append('user_id',user);fd.append('action',action);
+  try{
+    const d=await (await fetch('/api/remote_action',{method:'POST',body:fd})).json();
+    res.style.display='block';
+    if(d.ok){res.className='result-box result-ok';res.textContent='✅ User '+d.action+'!';}
+    else{res.className='result-box result-err';res.textContent='❌ '+d.error;}
+  }catch(e){res.style.display='block';res.className='result-box result-err';res.textContent='❌ Request failed';}
+}
+
+// ── QUICK GROUP MSG (from groups table) ──
+function quickGroupMsg(chatId,name){
+  document.getElementById('qMsgTitle').textContent='Send to: '+name;
+  document.getElementById('qMsgChatId').value=chatId;
+  document.getElementById('qMsgText').value='';
+  const modal=document.getElementById('qMsgModal');
+  modal.style.display='flex';
+}
+function closeQMsg(){document.getElementById('qMsgModal').style.display='none';}
+async function sendQMsg(){
+  const chatId=document.getElementById('qMsgChatId').value;
+  const msg=document.getElementById('qMsgText').value.trim();
+  if(!msg){showToast('Message cannot be empty','error');return;}
+  const fd=new FormData();fd.append('chat_id',chatId);fd.append('message',msg);
+  try{
+    const d=await (await fetch('/api/group_message',{method:'POST',body:fd})).json();
+    if(d.ok){showToast('✅ Message sent!','success');closeQMsg();}
+    else showToast('❌ '+d.error,'error');
+  }catch(e){showToast('❌ Request failed','error');}
+}
+
+// ── QUICK LOCK/UNLOCK ──
+// ── ADVANCED GROUP MANAGEMENT ──
+function openGroupManage(chatId, name){
+  document.getElementById('gmTitle').textContent = 'Manage: ' + name;
+  document.getElementById('gmChatId').value = chatId;
+  document.getElementById('gmInputTitle').value = name;
+  document.getElementById('gmInputDesc').value = '';
+  document.getElementById('gmInviteLink').textContent = "Click 'Fetch' to see link";
+  document.getElementById('gManageModal').style.display = 'flex';
+}
+
+function closeGroupManage(){
+  document.getElementById('gManageModal').style.display = 'none';
+}
+
+async function updateGmTitle(){
+  const chatId = document.getElementById('gmChatId').value;
+  const title = document.getElementById('gmInputTitle').value.trim();
+  if(!title){ showToast('Title cannot be empty','error'); return; }
+  const fd = new FormData(); fd.append('chat_id', chatId); fd.append('title', title);
+  try {
+    const d = await (await fetch('/api/edit_group_title', {method:'POST', body:fd})).json();
+    if(d.ok) showToast('✅ Title updated!', 'success');
+    else showToast('❌ ' + d.error, 'error');
+  } catch(e) { showToast('❌ Request failed', 'error'); }
+}
+
+async function updateGmDesc(){
+  const chatId = document.getElementById('gmChatId').value;
+  const desc = document.getElementById('gmInputDesc').value.trim();
+  const fd = new FormData(); fd.append('chat_id', chatId); fd.append('description', desc);
+  try {
+    const d = await (await fetch('/api/edit_group_description', {method:'POST', body:fd})).json();
+    if(d.ok) showToast('✅ Description updated!', 'success');
+    else showToast('❌ ' + d.error, 'error');
+  } catch(e) { showToast('❌ Request failed', 'error'); }
+}
+
+async function fetchGmLink(){
+  const chatId = document.getElementById('gmChatId').value;
+  try {
+    const d = await (await fetch('/api/get_group_link?chat_id='+chatId)).json();
+    if(d.ok) document.getElementById('gmInviteLink').textContent = d.link;
+    else showToast('❌ ' + d.error, 'error');
+  } catch(e) { showToast('❌ Request failed', 'error'); }
+}
+
+async function createGmLink(){
+  if(!confirm('This will revoke old links and create a new one. Proceed?')) return;
+  const chatId = document.getElementById('gmChatId').value;
+  const fd = new FormData(); fd.append('chat_id', chatId);
+  try {
+    const d = await (await fetch('/api/create_group_link', {method:'POST', body:fd})).json();
+    if(d.ok) {
+      document.getElementById('gmInviteLink').textContent = d.link;
+      showToast('✅ New link created!', 'success');
+    } else showToast('❌ ' + d.error, 'error');
+  } catch(e) { showToast('❌ Request failed', 'error'); }
+}
+
+async function quickLock(chatId,action){
+  const fd=new FormData();fd.append('chat_id',chatId);fd.append('action',action);
+  try{
+    const d=await (await fetch('/api/group_lock',{method:'POST',body:fd})).json();
+    if(d.ok)showToast(`✅ Group ${d.action} successfully!`,'success');
+    else showToast('❌ '+d.error,'error');
+  }catch(e){showToast('❌ Request failed','error');}
+}
+
+async function toggleAntilink(chatId, labelEl){
+  const fd=new FormData();fd.append('chat_id',chatId);
+  try{
+    const d=await (await fetch('/api/antilink_toggle',{method:'POST',body:fd})).json();
+    if(d.ok){
+      const chk=labelEl.querySelector('input');
+      if(chk)chk.checked=d.antilink;
+      showToast(`Anti-Link ${d.antilink?'Enabled ✅':'Disabled ❌'}`,'success');
+    } else showToast('❌ '+d.error,'error');
+  }catch(e){showToast('❌ Request failed','error');}
+}
+
+// ── MODERATION SECTION JS ──
+async function refreshModerations(){
+  try {
+    const res = await fetch('/api/active_moderation');
+    const d = await res.json();
+    
+    // Load mutes
+    document.getElementById('muteCount').textContent = d.mutes.length;
+    const mBody = document.getElementById('mutesTableBody');
+    if(d.mutes.length === 0){
+      mBody.innerHTML = `<tr><td colspan="6" class="empty"><div class="e-icon">🔇</div>No active temp-mutes</td></tr>`;
+    } else {
+      mBody.innerHTML = d.mutes.map(m => `
+        <tr>
+          <td><strong>${esc(m.user_name || 'User')}</strong><br><small class="text-muted">${m.user_id}</small></td>
+          <td><strong>${esc(m.group_name || 'Group')}</strong><br><small class="text-muted">${m.chat_id}</small></td>
+          <td><code>${esc(m.reason || 'None')}</code></td>
+          <td>${esc(m.muted_by || 'Admin')}</td>
+          <td><span class="badge badge-warning">${m.unmute_at}</span></td>
+          <td><button class="btn btn-success btn-sm" onclick="revokeMute('${m.chat_id}', '${m.user_id}')">Revoke</button></td>
+        </tr>
+      `).join('');
+    }
+    
+    // Load bans
+    document.getElementById('banCount').textContent = d.bans.length;
+    const bBody = document.getElementById('bansTableBody');
+    if(d.bans.length === 0){
+      bBody.innerHTML = `<tr><td colspan="6" class="empty"><div class="e-icon">🕊️</div>No active temp-bans</td></tr>`;
+    } else {
+      bBody.innerHTML = d.bans.map(b => `
+        <tr>
+          <td><strong>${esc(b.user_name || 'User')}</strong><br><small class="text-muted">${b.user_id}</small></td>
+          <td><strong>${esc(b.group_name || 'Group')}</strong><br><small class="text-muted">${b.chat_id}</small></td>
+          <td><code>${esc(b.reason || 'None')}</code></td>
+          <td>${esc(b.banned_by || 'Admin')}</td>
+          <td><span class="badge badge-danger">${b.unban_at || 'Permanent'}</span></td>
+          <td><button class="btn btn-success btn-sm" onclick="revokeBan('${b.chat_id}', '${b.user_id}')">Revoke</button></td>
+        </tr>
+      `).join('');
+    }
+  } catch(e) {
+    showToast('Failed to load moderations','error');
+  }
+}
+
+async function revokeMute(chatId, userId){
+  if(!confirm('Revoke this mute and unmute the user?')) return;
+  const fd = new FormData(); fd.append('chat_id', chatId); fd.append('user_id', userId);
+  try {
+    const res = await fetch('/api/unmute', {method: 'POST', body: fd});
+    const d = await res.json();
+    if(d.ok) {
+      showToast('User unmuted successfully!','success');
+      refreshModerations();
+    } else showToast('Error: ' + d.error, 'error');
+  } catch(e) { showToast('Request failed', 'error'); }
+}
+
+async function revokeBan(chatId, userId){
+  if(!confirm('Revoke this ban and unban the user?')) return;
+  const fd = new FormData(); fd.append('chat_id', chatId); fd.append('user_id', userId);
+  try {
+    const res = await fetch('/api/unban', {method: 'POST', body: fd});
+    const d = await res.json();
+    if(d.ok) {
+      showToast('User unbanned successfully!','success');
+      refreshModerations();
+    } else showToast('Error: ' + d.error, 'error');
+  } catch(e) { showToast('Request failed', 'error'); }
+}
+
+// ── AUTOMOD FILTERS & BAD WORDS JS ──
+let currentAutomodGroup = '';
+async function onAutomodGroupChange(chatId){
+  currentAutomodGroup = chatId;
+  const content = document.getElementById('automodContent');
+  const placeholder = document.getElementById('automodPlaceholder');
+  if(!chatId){
+    content.style.display = 'none';
+    placeholder.style.display = 'block';
+    return;
+  }
+  content.style.display = 'grid';
+  placeholder.style.display = 'none';
+  loadAutomodGroupData();
+}
+
+async function loadAutomodGroupData(){
+  if(!currentAutomodGroup) return;
+  try {
+    const res = await fetch('/api/groups');
+    const groups = await res.json();
+    
+    const g = groups[currentAutomodGroup] || {bad_words: [], filters: {}};
+    
+    // Render bad words
+    const bwList = document.getElementById('badWordsList');
+    const badWords = g.bad_words || [];
+    if(badWords.length === 0){
+      bwList.innerHTML = `<div class="empty" style="padding:20px;">No bad words configured</div>`;
+    } else {
+      bwList.innerHTML = badWords.map(w => `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid var(--border);">
+          <span style="font-family:monospace;font-size:0.9rem;">${esc(w)}</span>
+          <button class="btn btn-danger btn-icon btn-sm" onclick="deleteBadWord('${esc(w)}')">✕</button>
+        </div>
+      `).join('');
+    }
+    
+    // Render filters
+    const fBody = document.getElementById('filtersTableBody');
+    const filters = g.filters || {};
+    const keys = Object.keys(filters);
+    if(keys.length === 0){
+      fBody.innerHTML = `<tr><td colspan="3" class="empty">No filters configured</td></tr>`;
+    } else {
+      fBody.innerHTML = keys.map(k => `
+        <tr>
+          <td style="font-weight:600;"><code>${esc(k)}</code></td>
+          <td>${esc(filters[k].text || 'Media Filter')}</td>
+          <td><button class="btn btn-danger btn-sm btn-icon" onclick="deleteFilter('${esc(k)}')">✕</button></td>
+        </tr>
+      `).join('');
+    }
+  } catch(e) {
+    showToast('Failed to load group details','error');
+  }
+}
+
+async function addBadWord(){
+  const wordInput = document.getElementById('newBadWordInput');
+  const word = wordInput.value.trim();
+  if(!word) return;
+  const fd = new FormData(); fd.append('chat_id', currentAutomodGroup); fd.append('word', word);
+  try {
+    const res = await fetch('/api/add_bad_word', {method: 'POST', body: fd});
+    const d = await res.json();
+    if(d.ok){
+      wordInput.value = '';
+      showToast('Bad word added!','success');
+      loadAutomodGroupData();
+    } else showToast('Error: ' + d.error, 'error');
+  } catch(e) { showToast('Request failed', 'error'); }
+}
+
+async function deleteBadWord(word){
+  if(!confirm('Delete this word from filter?')) return;
+  const fd = new FormData(); fd.append('chat_id', currentAutomodGroup); fd.append('word', word);
+  try {
+    const res = await fetch('/api/delete_bad_word', {method: 'POST', body: fd});
+    const d = await res.json();
+    if(d.ok){
+      showToast('Bad word removed!','success');
+      loadAutomodGroupData();
+    } else showToast('Error: ' + d.error, 'error');
+  } catch(e) { showToast('Request failed', 'error'); }
+}
+
+async function addFilter(){
+  const trigInput = document.getElementById('filterTriggerInput');
+  const txtInput = document.getElementById('filterTextResponseInput');
+  const trigger = trigInput.value.trim();
+  const text = txtInput.value.trim();
+  if(!trigger || !text) { showToast('Trigger and response text are required','error'); return; }
+  const fd = new FormData(); 
+  fd.append('chat_id', currentAutomodGroup); 
+  fd.append('trigger', trigger);
+  fd.append('text', text);
+  try {
+    const res = await fetch('/api/add_filter', {method: 'POST', body: fd});
+    const d = await res.json();
+    if(d.ok){
+      trigInput.value = '';
+      txtInput.value = '';
+      showToast('Auto-reply filter created!','success');
+      loadAutomodGroupData();
+    } else showToast('Error: ' + d.error, 'error');
+  } catch(e) { showToast('Request failed', 'error'); }
+}
+
+async function deleteFilter(trigger){
+  if(!confirm('Delete auto-reply filter for: ' + trigger + '?')) return;
+  const fd = new FormData(); fd.append('chat_id', currentAutomodGroup); fd.append('trigger', trigger);
+  try {
+    const res = await fetch('/api/delete_filter', {method: 'POST', body: fd});
+    const d = await res.json();
+    if(d.ok){
+      showToast('Filter deleted!','success');
+      loadAutomodGroupData();
+    } else showToast('Error: ' + d.error, 'error');
+  } catch(e) { showToast('Request failed', 'error'); }
+}
+
+// ── POLLING ──
+setInterval(refreshStats,30000);
+setInterval(refreshLogs,30000);
+
+// ── HASH ROUTING ──
+if(location.hash){
+  const sec=location.hash.replace('#','');
+  const valid=['overview','users','groups','tools','msglink','broadcast','logs','settings','moderation','automod'];
+  if(valid.includes(sec))showSection(sec);
+}
+</script>
+</body>
+</html>
