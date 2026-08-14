@@ -1,4 +1,4 @@
-import sqlite3
+﻿import sqlite3
 import os
 import sys
 import json
@@ -7,6 +7,25 @@ import time as _time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+# Load .env so DATABASE_URL is picked up even when running the bot standalone
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
+# Optional PostgreSQL support (used when DATABASE_URL is set)
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    _PG_AVAILABLE = True
+except Exception:
+    psycopg2 = None
+    RealDictCursor = None
+    _PG_AVAILABLE = False
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+
 # Fix Windows encoding for emoji print statements
 try:
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -14,9 +33,105 @@ try:
 except Exception:
     pass
 
-# ─────────────────────────────────────────────────────────────
-# IN-MEMORY CACHE — eliminates redundant DB roundtrips
-# ─────────────────────────────────────────────────────────────
+
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# PostgreSQL adapter â€” translates SQLite-flavoured SQL to Postgres
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+def _adapt_sqlite_to_pg(sql):
+    """Convert a SQLite-flavoured statement to PostgreSQL.
+
+    Handles: `?` placeholders -> %s, INSERT OR IGNORE -> ON CONFLICT DO NOTHING,
+    INSERT OR REPLACE -> explicit ON CONFLICT upserts, datetime('now') -> NOW().
+    """
+    # INSERT OR REPLACE -> upsert (only two fixed statements use it)
+    if "INSERT OR REPLACE INTO pending_captchas" in sql:
+        return (
+            "INSERT INTO pending_captchas (chat_id, user_id, captcha_type, correct_answer, join_time) "
+            "VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(chat_id, user_id) DO UPDATE SET "
+            "captcha_type=excluded.captcha_type, correct_answer=excluded.correct_answer, "
+            "join_time=CURRENT_TIMESTAMP"
+        )
+    if "INSERT OR REPLACE INTO global_bans" in sql:
+        return (
+            "INSERT INTO global_bans (user_id, reason, banned_by) VALUES (%s, %s, %s) "
+            "ON CONFLICT(user_id) DO UPDATE SET reason=excluded.reason, banned_by=excluded.banned_by"
+        )
+
+    needs_ignore = "INSERT OR IGNORE INTO" in sql
+    sql = sql.replace("INSERT OR IGNORE INTO", "INSERT INTO")
+    sql = sql.replace("datetime('now')", "NOW()")
+    sql = sql.replace("?", "%s")
+    if needs_ignore:
+        sql = sql.rstrip()
+        if sql.endswith(";"):
+            sql = sql[:-1]
+        sql += " ON CONFLICT DO NOTHING"
+    return sql
+
+
+class _PGCursor:
+    """Wraps a psycopg2 RealDictCursor so existing code (row['col'], rowcount,
+    lastrowid, fetchone/fetchall) works unchanged."""
+
+    def __init__(self, raw):
+        self.raw = raw
+        self.rowcount = -1
+        self.lastrowid = None
+
+    def execute(self, sql, params=None):
+        sql = _adapt_sqlite_to_pg(sql)
+        if params is None:
+            self.raw.execute(sql)
+        else:
+            self.raw.execute(sql, params)
+        self.rowcount = self.raw.rowcount
+        try:
+            self.lastrowid = self.raw.lastrowid
+        except Exception:
+            self.lastrowid = None
+        return self
+
+    def fetchone(self):
+        return self.raw.fetchone()
+
+    def fetchall(self):
+        return self.raw.fetchall()
+
+    def close(self):
+        return self.raw.close()
+
+    def __iter__(self):
+        return iter(self.raw)
+
+
+class _PGConnection:
+    """Presents a psycopg2 connection with the same surface used by the code
+    (cursor(), execute(), commit(), rollback(), close())."""
+
+    def __init__(self, raw):
+        self.raw = raw
+
+    def cursor(self):
+        return _PGCursor(self.raw.cursor(cursor_factory=RealDictCursor))
+
+    def execute(self, sql, params=None):
+        cur = self.cursor()
+        cur.execute(sql, params)
+        return cur
+
+    def commit(self):
+        return self.raw.commit()
+
+    def rollback(self):
+        return self.raw.rollback()
+
+    def close(self):
+        return self.raw.close()
+
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# IN-MEMORY CACHE â€” eliminates redundant DB roundtrips
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _Cache:
     """Thread-safe TTL cache for hot data (groups, config)."""
     def __init__(self, ttl=30):
@@ -50,8 +165,16 @@ _config_cache = _Cache(ttl=60)
 class Database:
     def __init__(self, db_path="manager.db"):
         self.db_path = db_path
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.conn = None
+        if DATABASE_URL and DATABASE_URL.startswith("postgres"):
+            if not _PG_AVAILABLE:
+                print("âŒ DATABASE_URL is set but psycopg2 is not installed. Install psycopg2-binary.")
+                self.backend = "sqlite"
+            else:
+                self.backend = "pg"
+        else:
+            self.backend = "sqlite"
         if self._connect():
             self._migrate()
 
@@ -63,6 +186,13 @@ class Database:
                 except:
                     pass
 
+            if self.backend == "pg":
+                raw = psycopg2.connect(DATABASE_URL, connect_timeout=15)
+                raw.autocommit = True
+                self.conn = _PGConnection(raw)
+                print("✅ PostgreSQL database connected successfully.")
+                return True
+
             # Enable WAL mode for better concurrency
             self.conn = sqlite3.connect(self.db_path, timeout=10, check_same_thread=False)
             self.conn.execute("PRAGMA journal_mode=WAL")
@@ -70,10 +200,10 @@ class Database:
             self.conn.execute("PRAGMA synchronous=NORMAL")
             self.conn.execute("PRAGMA cache_size=-10000")  # 10MB cache
             self.conn.row_factory = sqlite3.Row
-            print("✅ SQLite database connected successfully.")
+            print("âœ… SQLite database connected successfully.")
             return True
         except Exception as e:
-            print(f"❌ Database connection failed: {e}")
+            print(f"âŒ Database connection failed: {e}")
             self.conn = None
             return False
 
@@ -84,9 +214,11 @@ class Database:
 
             # Verify connection is actually alive
             try:
-                self.conn.execute("SELECT 1")
+                cur = self.conn.execute("SELECT 1")
+                if hasattr(cur, "fetchone"):
+                    cur.fetchone()
                 return True
-            except sqlite3.DatabaseError:
+            except Exception:
                 return self._connect()
 
     def _migrate(self):
@@ -94,9 +226,13 @@ class Database:
             return
         with self.lock:
             try:
+                if self.backend == "pg":
+                    self._migrate_pg()
+                    return
+
                 c = self.conn.cursor()
 
-                # ── CONFIG TABLE ──
+                # â”€â”€ CONFIG TABLE â”€â”€
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS config (
                         key TEXT PRIMARY KEY,
@@ -104,8 +240,8 @@ class Database:
                     )
                 """)
 
-                # ── USERS TABLE ──
-                # NOTE: username has NO UNIQUE constraint — usernames can be recycled
+                # â”€â”€ USERS TABLE â”€â”€
+                # NOTE: username has NO UNIQUE constraint â€” usernames can be recycled
                 # or temporarily shared; a constraint here causes silent insert failures.
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS users (
@@ -126,7 +262,7 @@ class Database:
                     )
                 """)
 
-                # ── MIGRATION: Drop UNIQUE constraint on username if it exists ──
+                # â”€â”€ MIGRATION: Drop UNIQUE constraint on username if it exists â”€â”€
                 # SQLite doesn't support DROP CONSTRAINT; we check the DDL and rebuild the table.
                 # We check the actual CREATE TABLE SQL because SQLite names auto-indexes generically
                 # (e.g. 'sqlite_autoindex_users_2'), not by column name.
@@ -137,7 +273,7 @@ class Database:
                     # Detect UNIQUE on username column in the DDL
                     has_unique_username = "username TEXT UNIQUE" in current_ddl or "username text unique" in current_ddl.lower()
                     if has_unique_username:
-                        print("🔧 Migrating users table: removing UNIQUE constraint on username...")
+                        print("ðŸ”§ Migrating users table: removing UNIQUE constraint on username...")
                         c.execute("""
                             CREATE TABLE IF NOT EXISTS users_new (
                                 user_id TEXT PRIMARY KEY,
@@ -165,20 +301,20 @@ class Database:
                         """)
                         c.execute("DROP TABLE users")
                         c.execute("ALTER TABLE users_new RENAME TO users")
-                        print("✅ Username UNIQUE constraint removed successfully.")
+                        print("âœ… Username UNIQUE constraint removed successfully.")
                 except Exception as mig_err:
-                    print(f"⚠️ Username migration check: {mig_err}")
+                    print(f"âš ï¸ Username migration check: {mig_err}")
 
                 c.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_users_last_active ON users(last_active DESC)")
 
-                # ── GROUPS TABLE ──
+                # â”€â”€ GROUPS TABLE â”€â”€
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS groups (
                         chat_id TEXT PRIMARY KEY,
                         name TEXT DEFAULT 'Unknown Group',
                         rules TEXT DEFAULT 'No rules set yet...',
-                        welcome_message TEXT DEFAULT 'Welcome {name}! 👋',
+                        welcome_message TEXT DEFAULT 'Welcome {name}! ðŸ‘‹',
                         welcome_type TEXT DEFAULT 'text',
                         welcome_file_id TEXT DEFAULT '',
                         leave_message TEXT DEFAULT 'Goodbye {name}!',
@@ -209,7 +345,7 @@ class Database:
                 """)
                 c.execute("CREATE INDEX IF NOT EXISTS idx_groups_last_active ON groups(last_active DESC)")
 
-                # ── CAPTCHA MIGRATIONS ──
+                # â”€â”€ CAPTCHA MIGRATIONS â”€â”€
                 for col in [
                     "captcha INTEGER DEFAULT 0",
                     "captcha_mode TEXT DEFAULT 'button'",
@@ -224,7 +360,7 @@ class Database:
                     except sqlite3.OperationalError:
                         pass # Column already exists
 
-                # ── CHAT ACTIVITY / RANKINGS SYSTEM ──
+                # â”€â”€ CHAT ACTIVITY / RANKINGS SYSTEM â”€â”€
                 # Per-group feature toggles for the chat activity system
                 for col in [
                     "chat_tracking INTEGER DEFAULT 1",
@@ -313,7 +449,7 @@ class Database:
                 """)
                 c.execute("CREATE INDEX IF NOT EXISTS idx_cgm_group_date ON chat_group_milestones(group_id, date)")
 
-                # ── APPROVED USERS TABLE ──
+                # â”€â”€ APPROVED USERS TABLE â”€â”€
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS approved_users (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -327,7 +463,7 @@ class Database:
                 c.execute("CREATE INDEX IF NOT EXISTS idx_approved_users_chat_id ON approved_users(chat_id)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_approved_users_user_id ON approved_users(user_id)")
 
-                # ── PENDING CAPTCHAS TABLE ──
+                # â”€â”€ PENDING CAPTCHAS TABLE â”€â”€
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS pending_captchas (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -342,7 +478,7 @@ class Database:
                 c.execute("CREATE INDEX IF NOT EXISTS idx_pending_captchas_chat_id ON pending_captchas(chat_id)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_pending_captchas_user_id ON pending_captchas(user_id)")
 
-                # ── FILTERS TABLE ──
+                # â”€â”€ FILTERS TABLE â”€â”€
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS filters (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -354,7 +490,7 @@ class Database:
                 """)
                 c.execute("CREATE INDEX IF NOT EXISTS idx_filters_chat_id ON filters(chat_id)")
 
-                # ── BAD WORDS TABLE ──
+                # â”€â”€ BAD WORDS TABLE â”€â”€
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS bad_words (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -365,7 +501,7 @@ class Database:
                 """)
                 c.execute("CREATE INDEX IF NOT EXISTS idx_bad_words_chat_id ON bad_words(chat_id)")
 
-                # ── LOGS TABLE ──
+                # â”€â”€ LOGS TABLE â”€â”€
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS logs (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -375,7 +511,7 @@ class Database:
                 """)
                 c.execute("CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp DESC)")
 
-                # ── GLOBAL BANS TABLE ──
+                # â”€â”€ GLOBAL BANS TABLE â”€â”€
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS global_bans (
                         user_id TEXT PRIMARY KEY,
@@ -385,7 +521,7 @@ class Database:
                     )
                 """)
 
-                # ── USER MUTES TABLE (time-based) ──
+                # â”€â”€ USER MUTES TABLE (time-based) â”€â”€
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS user_mutes (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -403,7 +539,7 @@ class Database:
                 c.execute("CREATE INDEX IF NOT EXISTS idx_user_mutes_user_id ON user_mutes(user_id)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_user_mutes_unmute_at ON user_mutes(unmute_at)")
 
-                # ── USER BANS TABLE (time-based) ──
+                # â”€â”€ USER BANS TABLE (time-based) â”€â”€
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS user_bans (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -421,7 +557,7 @@ class Database:
                 c.execute("CREATE INDEX IF NOT EXISTS idx_user_bans_user_id ON user_bans(user_id)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_user_bans_unban_at ON user_bans(unban_at)")
 
-                # ── INFRACTION HISTORY TABLE ──
+                # â”€â”€ INFRACTION HISTORY TABLE â”€â”€
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS infraction_history (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -439,7 +575,7 @@ class Database:
                 c.execute("CREATE INDEX IF NOT EXISTS idx_infraction_chat_user ON infraction_history(chat_id, user_id)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_infraction_issued_at ON infraction_history(issued_at DESC)")
 
-                # ── SCHEDULED MESSAGES TABLE ──
+                # â”€â”€ SCHEDULED MESSAGES TABLE â”€â”€
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS scheduled_messages (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -456,7 +592,7 @@ class Database:
                 c.execute("CREATE INDEX IF NOT EXISTS idx_scheduled_messages_chat_id ON scheduled_messages(chat_id)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_scheduled_messages_scheduled_at ON scheduled_messages(scheduled_at)")
 
-                # ── USER STATS TABLE ──
+                # â”€â”€ USER STATS TABLE â”€â”€
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS user_stats (
                         user_id TEXT PRIMARY KEY,
@@ -470,9 +606,328 @@ class Database:
                 c.execute("CREATE INDEX IF NOT EXISTS idx_user_stats_user_id ON user_stats(user_id)")
 
                 self.conn.commit()
-                print("✅ Database migration check complete.")
+                print("âœ… Database migration check complete.")
             except Exception as e:
-                print(f"❌ Migration failed: {e}")
+                print(f"âŒ Migration failed: {e}")
+
+    def _migrate_pg(self):
+        """Create the same schema on PostgreSQL (Postgres-flavoured DDL)."""
+        try:
+            c = self.conn.cursor()
+
+            # â”€â”€ CONFIG TABLE â”€â”€
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS config (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+            """)
+
+            # â”€â”€ USERS TABLE â”€â”€ (no UNIQUE on username â€” usernames can be recycled)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id TEXT PRIMARY KEY,
+                    name TEXT,
+                    username TEXT,
+                    warnings INTEGER DEFAULT 0,
+                    role TEXT DEFAULT 'member',
+                    first_seen TEXT,
+                    reputation INTEGER DEFAULT 0,
+                    is_banned INTEGER DEFAULT 0,
+                    banned_reason TEXT,
+                    last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    msg_count INTEGER DEFAULT 0,
+                    last_group_id TEXT,
+                    last_group_name TEXT,
+                    join_count INTEGER DEFAULT 0
+                )
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_users_last_active ON users(last_active DESC)")
+
+            # â”€â”€ GROUPS TABLE â”€â”€
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS groups (
+                    chat_id TEXT PRIMARY KEY,
+                    name TEXT DEFAULT 'Unknown Group',
+                    rules TEXT DEFAULT 'No rules set yet...',
+                    welcome_message TEXT DEFAULT 'Welcome {name}! ðŸ‘‹',
+                    welcome_type TEXT DEFAULT 'text',
+                    welcome_file_id TEXT DEFAULT '',
+                    leave_message TEXT DEFAULT 'Goodbye {name}!',
+                    leave_type TEXT DEFAULT 'text',
+                    leave_file_id TEXT DEFAULT '',
+                    antispam INTEGER DEFAULT 0,
+                    antispam_auto_delete_links INTEGER DEFAULT 1,
+                    approve_mode INTEGER DEFAULT 0,
+                    message_count INTEGER DEFAULT 0,
+                    member_count INTEGER DEFAULT 0,
+                    filter_count INTEGER DEFAULT 0,
+                    language TEXT DEFAULT 'en',
+                    strict_mode INTEGER DEFAULT 0,
+                    log_channel_id TEXT,
+                    max_warnings INTEGER DEFAULT 3,
+                    last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    slow_mode INTEGER DEFAULT 0,
+                    linked_channel TEXT,
+                    slow_mode_delay INTEGER DEFAULT 0,
+                    captcha INTEGER DEFAULT 0,
+                    captcha_mode TEXT DEFAULT 'button',
+                    captcha_rules INTEGER DEFAULT 0,
+                    captcha_mute_time TEXT DEFAULT '',
+                    captcha_kick INTEGER DEFAULT 0,
+                    captcha_kick_time TEXT DEFAULT '',
+                    captcha_text TEXT DEFAULT 'Click to prove you are human'
+                )
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_groups_last_active ON groups(last_active DESC)")
+
+            # â”€â”€ CAPTCHA + CHAT ACTIVITY COLUMN MIGRATIONS â”€â”€
+            for col in [
+                "captcha INTEGER DEFAULT 0",
+                "captcha_mode TEXT DEFAULT 'button'",
+                "captcha_rules INTEGER DEFAULT 0",
+                "captcha_mute_time TEXT DEFAULT ''",
+                "captcha_kick INTEGER DEFAULT 0",
+                "captcha_kick_time TEXT DEFAULT ''",
+                "captcha_text TEXT DEFAULT 'Click to prove you are human'",
+                "chat_tracking INTEGER DEFAULT 1",
+                "user_milestones INTEGER DEFAULT 1",
+                "group_milestones INTEGER DEFAULT 1",
+                "leaderboard INTEGER DEFAULT 1"
+            ]:
+                c.execute(f"ALTER TABLE groups ADD COLUMN IF NOT EXISTS {col}")
+
+            # â”€â”€ CHAT ACTIVITY / RANKINGS TABLES â”€â”€
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS chat_user_stats (
+                    group_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    display_name TEXT DEFAULT 'Unknown',
+                    username TEXT,
+                    total_messages INTEGER DEFAULT 0,
+                    created_at TEXT,
+                    updated_at TEXT,
+                    PRIMARY KEY (group_id, user_id)
+                )
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_cus_group ON chat_user_stats(group_id, total_messages DESC)")
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS chat_daily_stats (
+                    group_id TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    total_messages INTEGER DEFAULT 0,
+                    PRIMARY KEY (group_id, date)
+                )
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_cds_group_date ON chat_daily_stats(group_id, date)")
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS chat_user_daily_stats (
+                    group_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    total_messages INTEGER DEFAULT 0,
+                    PRIMARY KEY (group_id, user_id, date)
+                )
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_cuds_group_date ON chat_user_daily_stats(group_id, date, total_messages DESC)")
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS chat_user_weekly_stats (
+                    group_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    week_start TEXT NOT NULL,
+                    total_messages INTEGER DEFAULT 0,
+                    PRIMARY KEY (group_id, user_id, week_start)
+                )
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_cuws_group_week ON chat_user_weekly_stats(group_id, week_start, total_messages DESC)")
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS chat_milestones (
+                    id BIGSERIAL PRIMARY KEY,
+                    group_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    milestone INTEGER NOT NULL,
+                    achieved_at TEXT,
+                    UNIQUE(group_id, user_id, milestone)
+                )
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_cm_group_user ON chat_milestones(group_id, user_id)")
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS chat_group_milestones (
+                    id BIGSERIAL PRIMARY KEY,
+                    group_id TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    milestone INTEGER NOT NULL,
+                    achieved_at TEXT,
+                    UNIQUE(group_id, date, milestone)
+                )
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_cgm_group_date ON chat_group_milestones(group_id, date)")
+
+            # â”€â”€ APPROVED USERS â”€â”€
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS approved_users (
+                    id BIGSERIAL PRIMARY KEY,
+                    chat_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    approved_by TEXT,
+                    approved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(chat_id, user_id)
+                )
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_approved_users_chat_id ON approved_users(chat_id)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_approved_users_user_id ON approved_users(user_id)")
+
+            # â”€â”€ PENDING CAPTCHAS â”€â”€
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS pending_captchas (
+                    id BIGSERIAL PRIMARY KEY,
+                    chat_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    captcha_type TEXT,
+                    correct_answer TEXT,
+                    join_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(chat_id, user_id)
+                )
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_pending_captchas_chat_id ON pending_captchas(chat_id)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_pending_captchas_user_id ON pending_captchas(user_id)")
+
+            # â”€â”€ FILTERS â”€â”€
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS filters (
+                    id BIGSERIAL PRIMARY KEY,
+                    chat_id TEXT NOT NULL,
+                    trigger TEXT NOT NULL,
+                    filter_data TEXT NOT NULL,
+                    UNIQUE(chat_id, trigger)
+                )
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_filters_chat_id ON filters(chat_id)")
+
+            # â”€â”€ BAD WORDS â”€â”€
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS bad_words (
+                    id BIGSERIAL PRIMARY KEY,
+                    chat_id TEXT NOT NULL,
+                    word TEXT NOT NULL,
+                    UNIQUE(chat_id, word)
+                )
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_bad_words_chat_id ON bad_words(chat_id)")
+
+            # â”€â”€ LOGS â”€â”€
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS logs (
+                    id BIGSERIAL PRIMARY KEY,
+                    event TEXT NOT NULL,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp DESC)")
+
+            # â”€â”€ GLOBAL BANS â”€â”€
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS global_bans (
+                    user_id TEXT PRIMARY KEY,
+                    reason TEXT,
+                    banned_by TEXT,
+                    banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # â”€â”€ USER MUTES (time-based) â”€â”€
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS user_mutes (
+                    id BIGSERIAL PRIMARY KEY,
+                    chat_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    muted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    unmute_at TIMESTAMP NOT NULL,
+                    reason TEXT,
+                    muted_by TEXT,
+                    is_active INTEGER DEFAULT 1,
+                    UNIQUE(chat_id, user_id)
+                )
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_user_mutes_chat_id ON user_mutes(chat_id)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_user_mutes_user_id ON user_mutes(user_id)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_user_mutes_unmute_at ON user_mutes(unmute_at)")
+
+            # â”€â”€ USER BANS (time-based) â”€â”€
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS user_bans (
+                    id BIGSERIAL PRIMARY KEY,
+                    chat_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    unban_at TIMESTAMP,
+                    reason TEXT,
+                    banned_by TEXT,
+                    is_active INTEGER DEFAULT 1,
+                    UNIQUE(chat_id, user_id)
+                )
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_user_bans_chat_id ON user_bans(chat_id)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_user_bans_user_id ON user_bans(user_id)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_user_bans_unban_at ON user_bans(unban_at)")
+
+            # â”€â”€ INFRACTION HISTORY â”€â”€
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS infraction_history (
+                    id BIGSERIAL PRIMARY KEY,
+                    chat_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    action_type TEXT NOT NULL,
+                    duration_seconds INTEGER,
+                    reason TEXT,
+                    issued_by TEXT,
+                    issued_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    resolved_at TIMESTAMP,
+                    resolved_by TEXT
+                )
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_infraction_chat_user ON infraction_history(chat_id, user_id)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_infraction_issued_at ON infraction_history(issued_at DESC)")
+
+            # â”€â”€ SCHEDULED MESSAGES â”€â”€
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS scheduled_messages (
+                    id BIGSERIAL PRIMARY KEY,
+                    chat_id TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    scheduled_at TIMESTAMP NOT NULL,
+                    message_type TEXT DEFAULT 'text',
+                    file_id TEXT,
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(chat_id, scheduled_at)
+                )
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_scheduled_messages_chat_id ON scheduled_messages(chat_id)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_scheduled_messages_scheduled_at ON scheduled_messages(scheduled_at)")
+
+            # â”€â”€ USER STATS â”€â”€
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS user_stats (
+                    user_id TEXT PRIMARY KEY,
+                    messages_sent INTEGER DEFAULT 0,
+                    links_shared INTEGER DEFAULT 0,
+                    warnings_received INTEGER DEFAULT 0,
+                    infractions_count INTEGER DEFAULT 0,
+                    last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_user_stats_user_id ON user_stats(user_id)")
+
+            self.conn.commit()
+            print("âœ… PostgreSQL migration check complete.")
+        except Exception as e:
+            print(f"âŒ PostgreSQL migration failed: {e}")
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
 
     def get_config(self):
         cached = _config_cache.get("config")
@@ -612,7 +1067,7 @@ class Database:
             except Exception as e:
                 print(f"Error in update_group_setting: {e}")
 
-    # ── CAPTCHA MANAGEMENT ──
+    # â”€â”€ CAPTCHA MANAGEMENT â”€â”€
     def add_pending_captcha(self, chat_id, user_id, captcha_type, correct_answer):
         if not self._check_conn(): return
         with self.lock:
@@ -659,9 +1114,9 @@ class Database:
                 print(f"Error get_all_pending_captchas: {e}")
                 return []
 
-    # ─────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # APPROVAL SYSTEM
-    # ─────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def is_user_approved(self, chat_id, user_id):
         if not self._check_conn():
             return True  # fail-open
@@ -1053,9 +1508,9 @@ class Database:
             except:
                 return 0
 
-    # ─────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # TIME-BASED MUTE/BAN SYSTEM
-    # ─────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def mute_user(self, chat_id, user_id, duration_seconds, reason="Spam", muted_by=None):
         """Add a temporary mute for user in chat"""
         if not self._check_conn():
@@ -1073,7 +1528,7 @@ class Database:
                     (str_chat, str_user, unmute_at, reason, muted_by)
                 )
                 self.conn.commit()
-                self.log_event(f"🔇 Mute: {str_user} in {str_chat} for {duration_seconds}s by {muted_by}")
+                self.log_event(f"ðŸ”‡ Mute: {str_user} in {str_chat} for {duration_seconds}s by {muted_by}")
             except Exception as e:
                 print(f"Error in mute_user: {e}")
 
@@ -1139,7 +1594,7 @@ class Database:
                 )
                 self.conn.commit()
                 dur_str = f"{duration_seconds}s" if duration_seconds else "permanent"
-                self.log_event(f"🚫 Ban: {str_user} in {str_chat} ({dur_str}) by {banned_by}")
+                self.log_event(f"ðŸš« Ban: {str_user} in {str_chat} ({dur_str}) by {banned_by}")
             except Exception as e:
                 print(f"Error in ban_user: {e}")
 
@@ -1290,9 +1745,9 @@ class Database:
             except:
                 return []
 
-    # ─────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # SCHEDULED MESSAGES SYSTEM
-    # ─────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def add_scheduled_message(self, chat_id, message, scheduled_at, message_type="text", file_id=None):
         """Add a scheduled message to the database"""
         if not self._check_conn():
@@ -1334,9 +1789,9 @@ class Database:
             except Exception as e:
                 print(f"Error in update_scheduled_message_status: {e}")
 
-    # ─────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # LOG SYSTEM
-    # ─────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def log_event(self, event):
         if not self._check_conn():
             return
@@ -1370,9 +1825,9 @@ class Database:
             except Exception as e:
                 print(f"Error in clear_logs: {e}")
 
-    # ─────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # TRACKING SYSTEM CONFIG
-    # ─────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def get_tracking_config(self):
         cached = _config_cache.get("tracking_config")
         if cached is not None:
@@ -1419,9 +1874,9 @@ class Database:
         self.update_config("tracking_destination_group", str(dest_id))
         _config_cache.invalidate("tracking_config")
 
-    # ─────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # USER STATS SYSTEM
-    # ─────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def update_user_stats(self, user_id, messages_sent=0, links_shared=0):
         """Update user statistics"""
         if not self._check_conn():
@@ -1457,9 +1912,9 @@ class Database:
             except:
                 return {}
 
-    # ─────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # BATCH OPERATIONS
-    # ─────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def batch_update_users(self, updates):
         """Batch update multiple users"""
         if not self._check_conn():
@@ -1524,9 +1979,9 @@ class Database:
                 print(f"Error in export_database: {e}")
                 return None
 
-    # ─────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # UTILITY METHODS
-    # ─────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def get_chat_members(self, chat_id, limit=100):
         """Get list of members in a chat (stub - requires Telegram API)"""
         # This would require making API calls to get actual members
@@ -1534,7 +1989,10 @@ class Database:
         return []
 
     def replace_database(self, backup_file):
-        """Replace current database with a backup file"""
+        """Replace current database with a backup file (SQLite only)."""
+        if self.backend == "pg":
+            print("âŒ replace_database is not supported on PostgreSQL.")
+            return False
         if not self._check_conn():
             return False
         try:
@@ -1555,9 +2013,9 @@ class Database:
             print(f"Error replacing database: {e}")
             return False
 
-    # ─────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # CHAT ACTIVITY / RANKINGS SYSTEM
-    # ─────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def track_chat_message(self, chat_id, user_id, display_name, username, today_str, week_start,
                            user_milestones, group_milestones):
         """
@@ -1624,7 +2082,7 @@ class Database:
                 row = c.fetchone()
                 result["user_total"] = int(row["total_messages"]) if row else 1
 
-                # 6) User milestones — recorded once ever per group/user/milestone.
+                # 6) User milestones â€” recorded once ever per group/user/milestone.
                 #    INSERT OR IGNORE + rowcount makes this safe under concurrency.
                 for m in user_milestones:
                     if result["user_total"] >= m:
@@ -1635,7 +2093,7 @@ class Database:
                         if c.rowcount > 0:
                             result["user_milestones"].append(m)
 
-                # 7) Daily group milestones — recorded once per group/date/milestone.
+                # 7) Daily group milestones â€” recorded once per group/date/milestone.
                 for m in group_milestones:
                     if result["group_today_total"] >= m:
                         c.execute(
