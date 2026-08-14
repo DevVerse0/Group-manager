@@ -511,17 +511,31 @@ def _char_has_glyph(font, char):
 
 
 def _font_for_char(char, size, bold=False):
-    """Pick the best available font able to render `char` (or None)."""
+    """Pick the best available font able to render `char` (or None).
+
+    Falls back from bold to regular fonts, and finally to Pillow's built-in
+    default font for plain ASCII, so names always appear even on servers
+    where no bold/system fonts are installed.
+    """
     if _EMOJI_RE.match(char):
         families = ("emoji", "latin")
     else:
         family = _script_family(char)
         families = (family, "latin") if family != "latin" else ("latin",)
+    want_bold = (True, False) if bold else (False,)
     for family in families:
-        for path in _get_font_paths(family, bold):
-            font = _get_font_from_path(path, size)
-            if font is not None and _char_has_glyph(font, char):
-                return font
+        for wb in want_bold:
+            for path in _get_font_paths(family, wb):
+                font = _get_font_from_path(path, size)
+                if font is not None and _char_has_glyph(font, char):
+                    return font
+    # Last resort: Pillow's built-in default font so ASCII names always render.
+    if ord(char) < 0x7F:
+        try:
+            from PIL import ImageFont
+            return ImageFont.load_default()
+        except Exception:
+            return None
     return None
 
 
@@ -772,7 +786,12 @@ def generate_leaderboard_image(entries, mode_label="OVERALL", group_title="", to
         name_runs = _truncate_runs(d, name, 26, True, name_max_w)
         if not name_runs:
             name_runs = _make_runs("Unknown", 26, True)
-        _draw_runs(d, (name_x, center - 17), name_runs, HI)
+        if name_runs:
+            _draw_runs(d, (name_x, center - 17), name_runs, HI)
+        else:
+            # Safety net: explicit draw even if every unicode run failed.
+            d.text((name_x, center - 17), name, font=_get_font(26, bold=True), fill=HI)
+            logger.debug(f"LEADERBOARD IMAGE USER: name={name!r} messages={count} (used direct draw)")
 
         # proportional rounded progress bar (longest = #1 = 100%)
         bh = 28
