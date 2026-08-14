@@ -589,101 +589,223 @@ def clean_name_for_image(name):
     return name or "Unknown"
 
 
-def generate_leaderboard_image(entries, mode_label="OVERALL", group_title=""):
-    """Render the dark/red leaderboard PNG and return its bytes.
+def generate_leaderboard_image(entries, mode_label="OVERALL", group_title="", total_msgs=None):
+    """Render the dark/red ChatFight-style leaderboard PNG and return its bytes.
 
-    The height auto-fits the number of ranked users (max 10) so there is no
-    large empty area below the last row. Returns None when there is nothing
-    to display (no ranked users), letting the caller fall back to a
-    text-only leaderboard.
+    Layout: glowing LEADERBOARD title on a dark maroon gradient with subtle
+    ring decorations, then a rounded ranking card (thin red border) containing
+    the top-10 rows. Each row has a rank badge, the username on the left
+    (always visible, unicode-aware, truncated if needed) and a proportional
+    red/gold rounded progress bar with the message count inside it.
+
+    The height auto-fits the number of ranked users (max 10) so there is never
+    a large empty area below the rows. Returns None when there is nothing to
+    display (no ranked users), letting the caller fall back to a text-only
+    leaderboard.
     """
     try:
         from PIL import Image, ImageDraw
     except Exception as e:
         raise RuntimeError(f"Pillow is not available: {e}")
 
-    top_entries = [e for e in (entries or []) if int(e.get("total_messages") or 0) > 0][:10]
+    top_entries = sorted(
+        (e for e in (entries or []) if int(e.get("total_messages") or 0) > 0),
+        key=lambda e: int(e.get("total_messages") or 0),
+        reverse=True,
+    )[:10]
     if not top_entries:
         return None
 
-    W = 900
-    PAD = 28
-    BG = (17, 17, 21)
-    CARD = (28, 28, 36)
-    ACCENT = (235, 57, 87)
-    HI = (238, 238, 244)
-    LO = (142, 142, 158)
-    BAR_BG = (43, 43, 54)
-    MEDAL = {1: (255, 208, 64), 2: (206, 213, 224), 3: (206, 127, 52)}
-
     n = len(top_entries)
-    row_h = 74
-    head_h = 158
-    H = head_h + n * row_h + 34
+    max_count = max(int(e.get("total_messages") or 0) for e in top_entries) or 1
 
-    img = Image.new("RGB", (W, H), BG)
+    # ── palette ──
+    W = 900
+    PAD = 34
+    BG_TOP = (26, 12, 18)
+    BG_BOT = (11, 6, 11)
+    CARD = (25, 14, 21)
+    CARD_ALT = (30, 17, 25)
+    CARD_BORDER = (206, 44, 70)
+    HI = (247, 242, 245)
+    LO = (170, 152, 160)
+    FADED = (122, 102, 112)
+    TRACK = (58, 31, 45)
+    BAR = (255, 66, 106)
+    BAR_TOP = (255, 122, 152)
+    GOLD = (255, 198, 64)
+    ACCENT = (255, 86, 122)
+    MEDAL_FILL = {1: GOLD, 2: (205, 210, 220), 3: (224, 144, 74)}
+    MEDAL_TEXT = {1: (58, 28, 0), 2: (40, 48, 58), 3: (58, 28, 0)}
+
+    # ── fonts ──
+    title_font = _get_font(66, bold=True)
+    brand_font = _get_font(19, bold=True)
+    mode_font = _get_font(22, bold=True)
+    chip_font = _get_font(16, bold=True)
+    col_font = _get_font(17, bold=True)
+    rank_font = _get_font(24, bold=True)
+    name_font = _get_font(26, bold=True)
+    cnt_font = _get_font(23, bold=True)
+    foot_font = _get_font(21, bold=True)
+
+    # ── geometry ──
+    inner_x = PAD + 26
+    content_right = W - PAD - 26
+    BAR_W = 470
+    bar_x = content_right - BAR_W
+    badge_cx = inner_x + 21
+    name_x = badge_cx + 40
+    name_max_w = bar_x - name_x - 14
+
+    card_top = 168
+    col_h = 32
+    row_h = 70
+    foot_h = 46 if total_msgs is not None else 12
+    card_h = 12 + col_h + n * row_h + foot_h + 14
+    H = card_top + card_h + 16
+
+    # ── base vertical-gradient background ──
+    img = Image.new("RGB", (W, H), BG_TOP)
+    d = ImageDraw.Draw(img)
+    for y in range(H):
+        t = y / max(1, H - 1)
+        r = int(BG_TOP[0] + (BG_BOT[0] - BG_TOP[0]) * t)
+        g = int(BG_TOP[1] + (BG_BOT[1] - BG_TOP[1]) * t)
+        b = int(BG_TOP[2] + (BG_BOT[2] - BG_TOP[2]) * t)
+        d.line([(0, y), (W, y)], fill=(r, g, b))
+
+    # ── decorative glow + rings (subtle RGBA overlay) ──
+    overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    od = ImageDraw.Draw(overlay)
+
+    def ring(cx, cy, radius, color, alpha):
+        od.ellipse([cx - radius, cy - radius, cx + radius, cy + radius],
+                   outline=(color[0], color[1], color[2], alpha), width=1)
+
+    # soft glow behind the title
+    od.ellipse([W / 2 - 300, -180, W / 2 + 300, 120], fill=(140, 18, 52, 48))
+    od.ellipse([W / 2 - 210, -130, W / 2 + 210, 70], fill=(205, 30, 72, 40))
+
+    # corner rings (subtle, never over text)
+    ring(30, 42, 26, (225, 62, 92), 36)
+    ring(30, 42, 44, (225, 62, 92), 22)
+    ring(W - 26, 60, 20, (225, 62, 92), 30)
+    ring(W - 26, 60, 34, (225, 62, 92), 18)
+    ring(26, H - 48, 22, (225, 62, 92), 28)
+    ring(26, H - 48, 38, (225, 62, 92), 16)
+    ring(W - 30, H - 62, 24, (225, 62, 92), 26)
+    ring(W - 30, H - 62, 40, (225, 62, 92), 14)
+
+    img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
     d = ImageDraw.Draw(img)
 
-    title_font = _get_font(46, bold=True)
-    sub_font = _get_font(19, bold=True)
-    name_font = _get_font(24, bold=True)
-    cnt_font = _get_font(24, bold=True)
-
-    # ── Header: title + underline + "MODE • Group name" ──
-    tw = d.textlength("LEADERBOARD", font=title_font or None)
-    d.text(((W - tw) / 2, 24), "LEADERBOARD", font=title_font, fill=ACCENT)
-    d.rounded_rectangle([W / 2 - 120, 92, W / 2 + 120, 100], radius=4, fill=ACCENT)
-
+    # ── header: branding top-left ──
     gt = clean_name_for_image(group_title)
+    brand_runs = _truncate_runs(d, gt, 19, True, W - 2 * PAD - 80)
+    _draw_runs(d, (PAD, 24), brand_runs, FADED)
+
+    # "TOP n" chip top-right
+    chip_text = f"TOP {n}"
+    chip_w = d.textlength(chip_text, font=chip_font or None) + 18
+    d.rounded_rectangle([W - PAD - chip_w, 24, W - PAD, 48], radius=12,
+                        fill=(72, 32, 46), outline=(150, 42, 62))
+    d.text((W - PAD - chip_w + 9, 26), chip_text, font=chip_font, fill=ACCENT)
+
+    # ── big glowing title ──
+    tw = d.textlength("LEADERBOARD", font=title_font or None)
+    tx = (W - tw) / 2
+    d.text((tx + 3, 48), "LEADERBOARD", font=title_font, fill=(122, 13, 36))
+    d.text((tx, 44), "LEADERBOARD", font=title_font, fill=(255, 92, 126))
+
+    # accent underline
+    uw = 180
+    d.rounded_rectangle([W / 2 - uw / 2, 124, W / 2 + uw / 2, 133], radius=4, fill=(112, 24, 46))
+    d.rounded_rectangle([W / 2 - uw / 2, 124, W / 2 + uw / 2 - 46, 133], radius=4, fill=ACCENT)
+
+    # mode • group name (real group title, unicode-aware)
     sub_text = f"{mode_label}  •  {gt}" if gt else mode_label
-    sub_runs = _truncate_runs(d, sub_text, 19, True, W - 2 * PAD)
+    sub_runs = _truncate_runs(d, sub_text, 22, True, W - 2 * PAD)
     sub_w = _runs_width(d, sub_runs)
-    _draw_runs(d, ((W - sub_w) / 2, 112), sub_runs, LO)
+    _draw_runs(d, ((W - sub_w) / 2, 140), sub_runs, LO)
 
-    # ── Row geometry ──
-    rank_w = d.textlength("10.", font=cnt_font or None) + 18
-    cnt_max_w = d.textlength("100,000", font=cnt_font or None) + 10
-    name_x = PAD + rank_w
-    content_right = W - PAD
-    name_max_w = content_right - name_x - cnt_max_w
+    # ── main ranking card ──
+    d.rounded_rectangle([PAD, card_top, W - PAD, card_top + card_h],
+                        radius=22, fill=CARD, outline=CARD_BORDER, width=2)
 
-    top = head_h
-    max_count = max((int(e.get("total_messages") or 0) for e in top_entries), default=0) or 1
+    # column headers
+    d.text((inner_x, card_top + 12 + 6), "USER", font=col_font, fill=LO)
+    msg_hdr = "MESSAGES"
+    d.text((content_right - d.textlength(msg_hdr, font=col_font or None), card_top + 12 + 6),
+           msg_hdr, font=col_font, fill=LO)
+    d.line([(inner_x, card_top + 12 + col_h - 4), (content_right, card_top + 12 + col_h - 4)],
+           fill=(72, 36, 52), width=1)
+
+    rows_top = card_top + 12 + col_h
 
     for i, e in enumerate(top_entries):
-        y = top + i * row_h
         rank = i + 1
         count = int(e.get("total_messages") or 0)
+        y = rows_top + i * row_h
+        center = y + row_h / 2
+        row_fill = CARD_ALT if rank % 2 == 0 else CARD
 
-        # Card background
-        d.rounded_rectangle([PAD, y + 2, W - PAD, y + row_h - 8], radius=14, fill=CARD)
+        # row chip
+        d.rounded_rectangle([inner_x - 6, y + 3, content_right + 6, y + row_h - 7],
+                            radius=14, fill=row_fill)
 
-        # Rank number (gold/silver/bronze for top 3)
-        rank_color = MEDAL.get(rank, HI)
-        d.text((PAD + 18, y + 10), f"{rank}.", font=cnt_font, fill=rank_color)
+        # rank badge (gold/silver/bronze for top 3)
+        mfill = MEDAL_FILL.get(rank, (68, 42, 54))
+        mtext = MEDAL_TEXT.get(rank, HI)
+        bx0 = badge_cx - 19
+        d.ellipse([bx0, center - 19, bx0 + 38, center + 19], fill=mfill)
+        rs = str(rank)
+        try:
+            rbb = d.textbbox((0, 0), rs, font=rank_font or None)
+            rw_, rh_ = rbb[2] - rbb[0], rbb[3] - rbb[1]
+        except Exception:
+            rw_, rh_ = 16, 16
+        d.text((bx0 + 19 - rw_ / 2, center - rh_ / 2 - 1), rs, font=rank_font, fill=mtext)
 
-        # Name — unicode runs, truncated to the available width
-        name_runs = _truncate_runs(d, clean_name_for_image(e.get("display_name")), 24, True, name_max_w)
+        # username — unicode runs, truncated to fit, always visible
+        name = clean_name_for_image(e.get("display_name") or "Unknown")
+        name_runs = _truncate_runs(d, name, 26, True, name_max_w)
         if not name_runs:
-            name_runs = _make_runs("Unknown", 24, True)
-        _draw_runs(d, (name_x, y + 10), name_runs, HI)
+            name_runs = _make_runs("Unknown", 26, True)
+        _draw_runs(d, (name_x, center - 17), name_runs, HI)
 
-        # Message count — right aligned
+        # proportional rounded progress bar (longest = #1 = 100%)
+        bh = 28
+        by = center - bh / 2
+        d.rounded_rectangle([bar_x, by, bar_x + BAR_W, by + bh], radius=bh / 2, fill=TRACK)
+
+        fill_w = int(BAR_W * (count / max_count))
+        if fill_w > BAR_W:
+            fill_w = BAR_W
+        bar_fill = GOLD if rank == 1 else BAR
+        if fill_w >= 8:
+            d.rounded_rectangle([bar_x, by, bar_x + fill_w, by + bh], radius=bh / 2, fill=bar_fill)
+            if fill_w >= 30 and rank != 1:
+                d.rounded_rectangle([bar_x, by + 3, bar_x + fill_w, by + bh - 8],
+                                    radius=(bh - 8) / 2, fill=BAR_TOP)
+
+        # message count — centered inside the bar (fallback: after bar)
         cnt_str = format_num(count)
         cw = d.textlength(cnt_str, font=cnt_font or None)
-        d.text((content_right - cw, y + 10), cnt_str, font=cnt_font, fill=HI)
+        cnt_fill = MEDAL_TEXT[1] if rank == 1 else (255, 255, 255)
+        if fill_w >= cw + 26:
+            d.text((bar_x + fill_w - cw - 14, center - 13), cnt_str, font=cnt_font, fill=cnt_fill)
+        else:
+            d.text((bar_x + fill_w + 12, center - 13), cnt_str, font=cnt_font, fill=HI)
 
-        # Proportional progress bar (longest = #1)
-        by = y + 46
-        bh = 6
-        bx = name_x
-        bw = content_right - bx
-        d.rounded_rectangle([bx, by, bx + bw, by + bh], radius=bh // 2, fill=BAR_BG)
-        fill_w = max(4, int(bw * (count / max_count)))
-        if fill_w > bw:
-            fill_w = bw
-        d.rounded_rectangle([bx, by, bx + fill_w, by + bh], radius=bh // 2,
-                            fill=(MEDAL[1] if rank == 1 else ACCENT))
+    # ── footer: total messages ──
+    if total_msgs is not None:
+        line_y = rows_top + n * row_h
+        d.line([(inner_x, line_y), (content_right, line_y)], fill=(72, 36, 52), width=1)
+        total_str = format_num(int(total_msgs or 0))
+        foot_text = f"TOTAL MESSAGES   {total_str}"
+        fw = d.textlength(foot_text, font=foot_font or None)
+        d.text(((W - fw) / 2, line_y + (foot_h - 20) / 2), foot_text, font=foot_font, fill=ACCENT)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -780,7 +902,7 @@ def show_leaderboard(bot, chat_id, mode, chat_title=None):
 
     img = None
     try:
-        img = generate_leaderboard_image(entries, _MODE_LABEL.get(mode, "Overall").upper(), chat_title)
+        img = generate_leaderboard_image(entries, _MODE_LABEL.get(mode, "Overall").upper(), chat_title, total_msgs=total)
     except Exception as e:
         logger.warning(f"Leaderboard image generation failed: {e}")
 
@@ -807,7 +929,7 @@ def edit_leaderboard(bot, call, mode, chat_id):
     chat_title = getattr(call.message.chat, "title", None)
     img = None
     try:
-        img = generate_leaderboard_image(entries, _MODE_LABEL.get(mode, "Overall").upper(), chat_title)
+        img = generate_leaderboard_image(entries, _MODE_LABEL.get(mode, "Overall").upper(), chat_title, total_msgs=total)
     except Exception as e:
         logger.warning(f"Leaderboard image generation failed (edit): {e}")
 
