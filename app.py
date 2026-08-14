@@ -91,7 +91,18 @@ templates = Jinja2Templates(directory="templates")
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok"}
+    # Touch the database so a keep-alive ping keeps the database (e.g. Neon)
+    # awake even when the bot has no message traffic.
+    db_alive = False
+    try:
+        if db._check_conn():
+            c = db.conn.execute("SELECT 1")
+            if hasattr(c, "fetchone"):
+                c.fetchone()
+            db_alive = True
+    except Exception:
+        db_alive = False
+    return {"status": "ok", "database": "connected" if db_alive else "unavailable"}
 
 @app.get("/ping")
 async def ping():
