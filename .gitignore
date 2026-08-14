@@ -1,0 +1,24 @@
+# Secrets & environment
+.env
+.env.*
+*.env
+
+# Databases (contain user data / secrets)
+*.db
+*.db.*
+manager.db*
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Logs & temp
+*.log
+*.tmp
+.DS_Store
+Thumbs.db

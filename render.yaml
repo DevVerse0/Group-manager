@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: groupbot-dashboard
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+      - key: BOT_TOKEN
+        sync: false          # ⚠️ Set this in Render dashboard → Environment
+      - key: OWNER_USERNAME
+        sync: false          # Your Telegram username (no @)
+      - key: SUPPORT_CHANNEL
+        sync: false          # Optional: support channel username (no @)
+      - key: CHAT_ACTIVITY_ENABLED
+        value: "1"           # Master switch for the Chat Activity system (1 = on, 0 = off)
+      - key: CHAT_ACTIVITY_TIMEZONE
+        value: "Asia/Dhaka"  # Leaderboard timezone (IANA zone, e.g. Asia/Dhaka)
