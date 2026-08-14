@@ -3,10 +3,10 @@
 .env.*
 *.env
 
-# Databases (contain user data / secrets)
-*.db
-*.db.*
-manager.db*
+# Database transient files (main manager.db IS tracked - needed for hosting)
+*.db-shm
+*.db-wal
+*.db.corrupt.bak
 
 # Python
 __pycache__/
