@@ -854,6 +854,16 @@ def generate_leaderboard_image(entries, mode_label="OVERALL", group_title="", to
         uid_str = str(e.get("user_id") or "")
         name = clean_name_for_image(raw_display)
         name_runs = _truncate_runs(d, name, 26, True, name_max_w)
+        # If many chars were dropped due to missing font, treat as blank (e.g., pure emoji/Bangla on font-less server)
+        if name_runs:
+            try:
+                runs_text = "".join(t for t, _ in name_runs)
+                # If more than half the chars were dropped and original was >2 chars, fallback
+                if len(runs_text) < len(name) * 0.5 and len(name) > 2:
+                    logger.warning(f"Leaderboard name dropped Rank {rank}: raw={raw_display!r} name={name!r} runs_text={runs_text!r} -> fallback")
+                    name_runs = []
+            except:
+                pass
         fallback_reason = None
         if not name_runs:
             # Try username as fallback (often ASCII even when display name is emoji/Bangla)
@@ -901,6 +911,8 @@ def generate_leaderboard_image(entries, mode_label="OVERALL", group_title="", to
                     fallback_reason = f"display_name={raw_display!r} -> raw_fallback"
         if fallback_reason:
             logger.warning(f"Leaderboard name fallback Rank {rank}: {fallback_reason} (uid={uid_str})")
+        else:
+            logger.info(f"Leaderboard name OK Rank {rank}: name={name!r} uid={uid_str}")
         # Draw — if fallback was used, draw directly with guaranteed font (ASCII username/ID always works)
         # Otherwise use unicode-aware runs for original display_name, but verify width
         try:
