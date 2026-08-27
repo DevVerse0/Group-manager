@@ -145,6 +145,7 @@ input:checked+.mini-slider:before{transform:translateX(18px);}
     <div class="nav-section">Data</div>
     <button class="nav-item" onclick="showSection('users')" id="nav-users"><span class="nav-icon">👥</span>Users</button>
     <button class="nav-item" onclick="showSection('groups')" id="nav-groups"><span class="nav-icon">🏘️</span>Groups</button>
+    <button class="nav-item" onclick="showSection('leaderboard')" id="nav-leaderboard"><span class="nav-icon">🏆</span>Leaderboard</button>
 
     <div class="nav-section">Control</div>
     <button class="nav-item" onclick="showSection('tools')" id="nav-tools"><span class="nav-icon">🛠️</span>Remote Tools</button>
@@ -387,7 +388,7 @@ input:checked+.mini-slider:before{transform:translateX(18px);}
         {% if groups %}
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Name</th><th>Chat ID</th><th>Msgs</th><th>Members</th><th>Lang</th><th>Filters</th><th>Strict</th><th>Anti-Spam</th><th>Anti-Link</th><th>Last Active</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Name</th><th>Chat ID</th><th>Msgs</th><th>Members</th><th>Lang</th><th>Filters</th><th>Strict</th><th>Anti-Spam</th><th>Anti-Link</th><th>Keyword</th><th>Last Active</th><th>Actions</th></tr></thead>
             <tbody>
             {% for gid, g in groups.items() %}
             <tr>
@@ -416,6 +417,12 @@ input:checked+.mini-slider:before{transform:translateX(18px);}
                   <span class="mini-slider"></span>
                 </label>
               </td>
+              <td>
+                <label class="mini-toggle" title="Toggle Keyword Alert" onclick="toggleKeywordAlert('{{ gid }}', this)">
+                  <input type="checkbox" {% if g.keyword_alert %}checked{% endif %} onclick="return false;">
+                  <span class="mini-slider"></span>
+                </label>
+              </td>
               <td style="color:var(--text-muted);font-size:0.8rem;">{{ g.last_active or '—' }}</td>
               <td>
                 <div class="action-pills">
@@ -438,6 +445,61 @@ input:checked+.mini-slider:before{transform:translateX(18px);}
         {% else %}
         <div class="empty"><div class="e-icon">🏘️</div>No groups registered yet</div>
         {% endif %}
+      </div>
+    </section>
+
+    <!-- ── LIVE LEADERBOARD ── -->
+    <section class="section" id="section-leaderboard">
+      <div class="page-header">
+        <div><div class="page-title">Live Leaderboard</div><div class="page-subtitle">Real-time chat activity rankings per group — Overall / Today / Week</div></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button class="btn btn-ghost" onclick="loadLeaderboard()">🔄 Refresh</button>
+          <button class="btn btn-ghost" id="lbImageBtn" onclick="openLeaderboardImage()" style="display:none;">🖼️ View Image</button>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:20px;">
+        <div style="display:grid;grid-template-columns:1fr auto;gap:12px;align-items:end;">
+          <div class="form-group" style="margin:0;">
+            <label>Select Group</label>
+            <select id="lbGroupSelect" onchange="loadLeaderboard()">
+              <option value="">-- Choose a group --</option>
+              {% for gid, g in groups.items() %}
+                <option value="{{ gid }}">{{ g.name or 'Group' }} ({{ gid }})</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-primary" id="lbBtnOverall" onclick="setLbMode('overall')">Overall</button>
+            <button class="btn btn-ghost" id="lbBtnToday" onclick="setLbMode('today')">Today</button>
+            <button class="btn btn-ghost" id="lbBtnWeek" onclick="setLbMode('week')">Week</button>
+          </div>
+        </div>
+        <div style="display:flex;gap:16px;margin-top:16px;flex-wrap:wrap;">
+          <div class="badge badge-primary" id="lbTotal">Total: —</div>
+          <div class="badge badge-muted" id="lbTotalUsers">Users: —</div>
+          <div class="badge badge-cyan" id="lbModeBadge">Mode: Overall</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">🏆 Top Rankings</div>
+          <span class="badge badge-primary" id="lbCountBadge">—</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>#</th><th>User</th><th>Messages</th><th>Share</th></tr></thead>
+            <tbody id="lbTableBody">
+              <tr><td colspan="4" class="empty">Select a group to view rankings</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="lbPagination" style="display:flex;gap:10px;justify-content:center;margin-top:16px;"></div>
+      </div>
+      <div class="card" id="lbImageCard" style="margin-top:20px;display:none;">
+        <div class="card-header"><div class="card-title">🖼️ Leaderboard Image Preview</div></div>
+        <div style="text-align:center;padding:10px;">
+          <img id="lbImage" src="" alt="Leaderboard" style="max-width:100%;border-radius:14px;border:1px solid var(--border);">
+        </div>
       </div>
     </section>
 
@@ -651,6 +713,14 @@ input:checked+.mini-slider:before{transform:translateX(18px);}
           </select>
         </div>
       </div>
+      <div id="keywordAlertCard" style="display:none;" class="card" style="margin-bottom:22px;">
+        <div class="card-header"><div class="card-title">🚨 Keyword Alert</div><span class="badge badge-warning" id="keywordAlertStatus">—</span></div>
+        <div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap;">
+          <div class="form-group" style="flex:1;margin:0;min-width:200px;"><label>Keywords (comma separated)</label><input type="text" id="keywordWordsInput" placeholder="@admin,help,support"></div>
+          <button class="btn btn-warning" onclick="updateKeywordWords()">Update</button>
+        </div>
+        <small style="color:var(--text-muted);font-size:0.78rem;margin-top:8px;display:block;">When any of these words appear, all admins will be alerted (60s cooldown per user). Use /keywordalert to toggle on/off.</small>
+      </div>
       <div id="automodContent" style="display:none;" class="grid-2">
         <div class="card">
           <div class="card-header">
@@ -734,20 +804,52 @@ input:checked+.mini-slider:before{transform:translateX(18px);}
           </form>
         </div>
 
-        <div class="card">
-          <div class="card-title" style="margin-bottom:14px;">📡 API Endpoints</div>
-          <div style="display:flex;flex-direction:column;gap:8px;font-size:0.83rem;">
-            <div class="info-row"><span class="info-label">GET /api/stats</span><code>Live stats JSON</code></div>
-            <div class="info-row"><span class="info-label">GET /api/logs</span><code>Recent logs JSON</code></div>
-            <div class="info-row"><span class="info-label">GET /api/groups</span><code>All groups JSON</code></div>
-            <div class="info-row"><span class="info-label">GET /api/users</span><code>All users JSON</code></div>
-            <div class="info-row"><span class="info-label">POST /api/message_action</span><code>delete/pin/unpin</code></div>
-            <div class="info-row"><span class="info-label">POST /api/antispam_toggle</span><code>Toggle per group</code></div>
-            <div class="info-row"><span class="info-label">POST /api/group_message</span><code>Send to group</code></div>
-            <div class="info-row"><span class="info-label">POST /api/group_lock</span><code>lock/unlock group</code></div>
-            <div class="info-row"><span class="info-label">POST /api/remote_action</span><code>ban/kick/mute/warn</code></div>
-          </div>
-        </div>
+        <div class="card" style="border:1px solid rgba(245,158,11,0.25);">
+           <div class="card-title" style="margin-bottom:8px;">🛡️ Ranking Anti-Spam Control</div>
+           <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:16px;">If a user sends more than <b>MAX</b> messages within <b>WINDOW</b> seconds, their messages won't count toward leaderboard for <b>COOLDOWN</b> seconds. Works for text/sticker/gif/photo. Applies to everyone (owner/admin too). Live — no restart needed.</p>
+           <form action="/api/rank_spam/update" method="POST">
+             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+               <div class="form-group" style="margin:0;">
+                 <label>MAX messages (2-20)</label>
+                 <input type="number" name="rank_spam_max" min="2" max="20" step="1" value="{{ rank_spam_config.max }}" required>
+                 <small style="color:var(--text-muted);font-size:0.72rem;">Current: {{ rank_spam_config.max }}</small>
+               </div>
+               <div class="form-group" style="margin:0;">
+                 <label>WINDOW seconds (1-60)</label>
+                 <input type="number" name="rank_spam_window" min="1" max="60" step="0.5" value="{{ rank_spam_config.window }}" required>
+                 <small style="color:var(--text-muted);font-size:0.72rem;">Current: {{ rank_spam_config.window }}s</small>
+               </div>
+               <div class="form-group" style="margin:0;">
+                 <label>COOLDOWN seconds (30-3600)</label>
+                 <input type="number" name="rank_spam_cooldown" min="30" max="3600" step="30" value="{{ rank_spam_config.cooldown }}" required>
+                 <small style="color:var(--text-muted);font-size:0.72rem;">Current: {{ rank_spam_config.cooldown }}s ({{ (rank_spam_config.cooldown//60) }} min)</small>
+               </div>
+             </div>
+             <div style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+               <button type="submit" class="btn btn-warning">💾 Save Ranking Anti-Spam</button>
+               <span style="font-size:0.78rem;color:var(--text-muted);">Example: {{ rank_spam_config.max }} msgs / {{ rank_spam_config.window }}s → {{ rank_spam_config.cooldown//60 }} min block</span>
+             </div>
+           </form>
+           <div style="margin-top:12px;display:flex;flex-direction:column;gap:6px;font-size:0.78rem;color:var(--text-muted);background:rgba(0,0,0,0.2);padding:10px;border-radius:10px;border:1px solid var(--border);">
+             <div>• <code>GET /api/rank_spam/status</code> → live JSON</div>
+             <div>• <code>POST /api/rank_spam/update</code> → update (form: rank_spam_max, rank_spam_window, rank_spam_cooldown)</div>
+           </div>
+         </div>
+
+         <div class="card">
+           <div class="card-title" style="margin-bottom:14px;">📡 API Endpoints</div>
+           <div style="display:flex;flex-direction:column;gap:8px;font-size:0.83rem;">
+             <div class="info-row"><span class="info-label">GET /api/stats</span><code>Live stats JSON</code></div>
+             <div class="info-row"><span class="info-label">GET /api/logs</span><code>Recent logs JSON</code></div>
+             <div class="info-row"><span class="info-label">GET /api/groups</span><code>All groups JSON</code></div>
+             <div class="info-row"><span class="info-label">GET /api/users</span><code>All users JSON</code></div>
+             <div class="info-row"><span class="info-label">POST /api/message_action</span><code>delete/pin/unpin</code></div>
+             <div class="info-row"><span class="info-label">POST /api/antispam_toggle</span><code>Toggle per group</code></div>
+             <div class="info-row"><span class="info-label">POST /api/group_message</span><code>Send to group</code></div>
+             <div class="info-row"><span class="info-label">POST /api/group_lock</span><code>lock/unlock group</code></div>
+             <div class="info-row"><span class="info-label">POST /api/remote_action</span><code>ban/kick/mute/warn</code></div>
+           </div>
+         </div>
         <div class="card">
           <div class="card-title" style="margin-bottom:14px;">⚠️ Danger Zone</div>
           <div style="display:flex;flex-direction:column;gap:10px;">
@@ -1156,6 +1258,31 @@ async function toggleAntilink(chatId, labelEl){
   }catch(e){showToast('❌ Request failed','error');}
 }
 
+async function toggleKeywordAlert(chatId, labelEl){
+  const fd=new FormData();fd.append('chat_id',chatId);
+  try{
+    const d=await (await fetch('/api/keyword_alert/toggle',{method:'POST',body:fd})).json();
+    if(d.ok){
+      const chk=labelEl.querySelector('input');
+      if(chk)chk.checked=d.keyword_alert;
+      showToast(`Keyword Alert ${d.keyword_alert?'Enabled ✅':'Disabled ❌'}`,'success');
+    } else showToast('❌ '+d.error,'error');
+  }catch(e){showToast('❌ Request failed','error');}
+}
+
+async function updateKeywordWords(){
+  const chatId = currentAutomodGroup;
+  const words = document.getElementById('keywordWordsInput').value.trim();
+  if(!chatId){ showToast('Select a group first','error'); return; }
+  if(!words){ showToast('Enter keywords','error'); return; }
+  const fd=new FormData();fd.append('chat_id',chatId);fd.append('words',words);
+  try{
+    const d=await (await fetch('/api/keyword_alert/words',{method:'POST',body:fd})).json();
+    if(d.ok){ showToast('Keywords updated ✅','success'); loadAutomodGroupData(); }
+    else showToast('❌ '+d.error,'error');
+  }catch(e){showToast('❌ Request failed','error');}
+}
+
 // ── MODERATION SECTION JS ──
 async function refreshModerations(){
   try {
@@ -1234,13 +1361,16 @@ async function onAutomodGroupChange(chatId){
   currentAutomodGroup = chatId;
   const content = document.getElementById('automodContent');
   const placeholder = document.getElementById('automodPlaceholder');
+  const kwCard = document.getElementById('keywordAlertCard');
   if(!chatId){
     content.style.display = 'none';
     placeholder.style.display = 'block';
+    if(kwCard) kwCard.style.display = 'none';
     return;
   }
   content.style.display = 'grid';
   placeholder.style.display = 'none';
+  if(kwCard) kwCard.style.display = 'block';
   loadAutomodGroupData();
 }
 
@@ -1252,6 +1382,12 @@ async function loadAutomodGroupData(){
     
     const g = groups[currentAutomodGroup] || {bad_words: [], filters: {}};
     
+    // Update keyword alert card
+    const kwInput = document.getElementById('keywordWordsInput');
+    const kwStatus = document.getElementById('keywordAlertStatus');
+    if(kwInput) kwInput.value = g.keyword_alert_words || '@admin,admin,help,support';
+    if(kwStatus) kwStatus.textContent = g.keyword_alert ? 'ON ✅' : 'OFF ❌';
+
     // Render bad words
     const bwList = document.getElementById('badWordsList');
     const badWords = g.bad_words || [];
@@ -1350,6 +1486,95 @@ async function deleteFilter(trigger){
   } catch(e) { showToast('Request failed', 'error'); }
 }
 
+// ── LEADERBOARD ──
+let currentLbMode = 'overall';
+let currentLbOffset = 0;
+const lbLimit = 10;
+
+function setLbMode(mode){
+  currentLbMode = mode;
+  currentLbOffset = 0;
+  document.getElementById('lbBtnOverall').className = mode==='overall' ? 'btn btn-primary' : 'btn btn-ghost';
+  document.getElementById('lbBtnToday').className = mode==='today' ? 'btn btn-primary' : 'btn btn-ghost';
+  document.getElementById('lbBtnWeek').className = mode==='week' ? 'btn btn-primary' : 'btn btn-ghost';
+  document.getElementById('lbModeBadge').textContent = 'Mode: ' + mode.charAt(0).toUpperCase() + mode.slice(1);
+  loadLeaderboard();
+}
+
+async function loadLeaderboard(){
+  const gid = document.getElementById('lbGroupSelect').value;
+  const tbody = document.getElementById('lbTableBody');
+  const totalEl = document.getElementById('lbTotal');
+  const totalUsersEl = document.getElementById('lbTotalUsers');
+  const countBadge = document.getElementById('lbCountBadge');
+  const pagination = document.getElementById('lbPagination');
+  const imgBtn = document.getElementById('lbImageBtn');
+  const imgCard = document.getElementById('lbImageCard');
+  if(!gid){
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">Select a group to view rankings</td></tr>';
+    totalEl.textContent = 'Total: —';
+    totalUsersEl.textContent = 'Users: —';
+    countBadge.textContent = '—';
+    pagination.innerHTML = '';
+    imgBtn.style.display = 'none';
+    imgCard.style.display = 'none';
+    return;
+  }
+  tbody.innerHTML = '<tr><td colspan="4" class="empty">Loading...</td></tr>';
+  try{
+    const res = await fetch(`/api/rankings?chat_id=${encodeURIComponent(gid)}&mode=${currentLbMode}&limit=${lbLimit}&offset=${currentLbOffset}`);
+    const d = await res.json();
+    if(!d.ok){ tbody.innerHTML = `<tr><td colspan="4" class="empty">Error: ${esc(d.error||'failed')}</td></tr>`; return; }
+    totalEl.textContent = 'Total: ' + (d.total||0).toLocaleString();
+    totalUsersEl.textContent = 'Users: ' + (d.total_users||0);
+    countBadge.textContent = d.entries.length + ' shown';
+    if(d.entries.length===0){
+      tbody.innerHTML = '<tr><td colspan="4" class="empty">No rankings yet — start chatting!</td></tr>';
+    } else {
+      const maxMsg = Math.max(...d.entries.map(e=>e.total_messages||0), 1);
+      tbody.innerHTML = d.entries.map((e, i) => {
+        const rank = currentLbOffset + i + 1;
+        const name = esc(e.display_name||'Unknown');
+        const uname = e.username ? '@'+esc(e.username) : '';
+        const msgs = (e.total_messages||0).toLocaleString();
+        const pct = Math.round((e.total_messages||0)/maxMsg*100);
+        const medal = rank===1 ? '🥇' : rank===2 ? '🥈' : rank===3 ? '🥉' : '#'+rank;
+        return `<tr>
+          <td><span class="badge ${rank<=3?'badge-warning':'badge-muted'}">${medal}</span></td>
+          <td><div style="font-weight:600;">${name}</div><small style="color:var(--text-muted);">${uname} <code>${e.user_id}</code></small></td>
+          <td><span class="badge badge-primary">${msgs}</span></td>
+          <td><div style="background:rgba(255,255,255,0.08);border-radius:100px;height:8px;width:100px;overflow:hidden;"><div style="height:100%;width:${pct}%;background:linear-gradient(to right,#f43f5e,#f59e0b);border-radius:100px;"></div></div><small style="color:var(--text-muted);">${pct}%</small></td>
+        </tr>`;
+      }).join('');
+    }
+    // Pagination
+    const totalPages = Math.ceil((d.total_users||0)/lbLimit);
+    const currentPage = Math.floor(currentLbOffset/lbLimit)+1;
+    let pagHtml = '';
+    if(totalPages>1){
+      if(currentPage>1) pagHtml += `<button class="btn btn-ghost btn-sm" onclick="lbPrev()">⬅️ Previous</button>`;
+      pagHtml += `<span style="padding:6px 12px;color:var(--text-muted);font-size:0.85rem;">Page ${currentPage}/${totalPages}</span>`;
+      if(currentPage<totalPages) pagHtml += `<button class="btn btn-ghost btn-sm" onclick="lbNext()">Next ➡️</button>`;
+    }
+    pagination.innerHTML = pagHtml;
+    // Show image button
+    imgBtn.style.display = d.entries.length>0 ? '' : 'none';
+    // Auto-load image preview
+    const imgEl = document.getElementById('lbImage');
+    imgEl.src = `/api/rankings/image?chat_id=${encodeURIComponent(gid)}&mode=${currentLbMode}&t=${Date.now()}`;
+    imgCard.style.display = 'block';
+  } catch(e){
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">Failed to load</td></tr>';
+  }
+}
+function lbPrev(){ if(currentLbOffset>=lbLimit){ currentLbOffset-=lbLimit; loadLeaderboard(); } }
+function lbNext(){ currentLbOffset+=lbLimit; loadLeaderboard(); }
+function openLeaderboardImage(){
+  const gid = document.getElementById('lbGroupSelect').value;
+  if(!gid) return;
+  window.open(`/api/rankings/image?chat_id=${encodeURIComponent(gid)}&mode=${currentLbMode}`, '_blank');
+}
+
 // ── POLLING ──
 setInterval(refreshStats,30000);
 setInterval(refreshLogs,30000);
@@ -1357,7 +1582,7 @@ setInterval(refreshLogs,30000);
 // ── HASH ROUTING ──
 if(location.hash){
   const sec=location.hash.replace('#','');
-  const valid=['overview','users','groups','tools','msglink','broadcast','logs','settings','moderation','automod'];
+  const valid=['overview','users','groups','leaderboard','tools','msglink','broadcast','logs','settings','moderation','automod'];
   if(valid.includes(sec))showSection(sec);
 }
 </script>

@@ -373,6 +373,16 @@ class Database:
                     except sqlite3.OperationalError:
                         pass # Column already exists
 
+                # ── KEYWORD ALERT SYSTEM ──
+                for col in [
+                    "keyword_alert INTEGER DEFAULT 0",
+                    "keyword_alert_words TEXT DEFAULT '@admin,admin,help,support'"
+                ]:
+                    try:
+                        c.execute(f"ALTER TABLE groups ADD COLUMN {col}")
+                    except sqlite3.OperationalError:
+                        pass # Column already exists
+
                 # Per-user overall message totals per group
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS chat_user_stats (
@@ -1059,7 +1069,8 @@ class Database:
                                 "filter_count", "approve_mode", "slow_mode", "linked_channel", "slow_mode_delay",
                                 "log_channel_id", "captcha", "captcha_mode", "captcha_rules", "captcha_mute_time",
                                 "captcha_kick", "captcha_kick_time", "captcha_text",
-                                "chat_tracking", "user_milestones", "group_milestones", "leaderboard"}
+                                "chat_tracking", "user_milestones", "group_milestones", "leaderboard",
+                                "keyword_alert", "keyword_alert_words"}
                     if key in valid_keys:
                         c.execute(f"UPDATE groups SET {key}=? WHERE chat_id=?", (value, str_id))
                 self.conn.commit()
@@ -1328,6 +1339,22 @@ class Database:
             except:
                 return 0
 
+    def remove_warning(self, user_id):
+        """Remove one warning (decrement by 1, not below 0). Returns new count."""
+        if not self._check_conn():
+            return 0
+        str_id = str(user_id)
+        with self.lock:
+            try:
+                c = self.conn.cursor()
+                c.execute("UPDATE users SET warnings = CASE WHEN warnings > 0 THEN warnings - 1 ELSE 0 END WHERE user_id=?", (str_id,))
+                c.execute("SELECT warnings FROM users WHERE user_id=?", (str_id,))
+                row = c.fetchone()
+                self.conn.commit()
+                return int(row['warnings']) if row else 0
+            except:
+                return 0
+
     def reset_warnings(self, user_id):
         if not self._check_conn():
             return
@@ -1393,7 +1420,9 @@ class Database:
                 c = self.conn.cursor()
                 c.execute("""
                     SELECT g.chat_id, g.name, g.message_count, g.member_count,
-                           g.last_active, g.antispam, g.welcome_message, g.welcome_type, g.welcome_file_id,
+                           g.last_active, g.antispam, g.antispam_auto_delete_links,
+                           g.keyword_alert, g.keyword_alert_words,
+                           g.welcome_message, g.welcome_type, g.welcome_file_id,
                            g.leave_message, g.leave_type, g.leave_file_id, g.strict_mode, g.max_warnings,
                            (SELECT COUNT(*) FROM filters WHERE chat_id = g.chat_id) as filter_count,
                            (SELECT COUNT(*) FROM bad_words WHERE chat_id = g.chat_id) as bad_words_count

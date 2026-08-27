@@ -14,6 +14,17 @@ from typing import Optional
 from database import db
 from bot_manager import bot_manager
 import telebot.types as tg_types
+import hashlib
+
+# Admin panel protection (set ADMIN_PASSWORD or DASHBOARD_PASSWORD in env to enable)
+ADMIN_PASSWORD = (os.getenv("ADMIN_PASSWORD") or os.getenv("DASHBOARD_PASSWORD") or "").strip()
+
+def _is_admin_authenticated(request: Request) -> bool:
+    if not ADMIN_PASSWORD:
+        return True  # no password set -> open access
+    token = request.cookies.get("admin_auth", "")
+    expected = hashlib.sha256(ADMIN_PASSWORD.encode()).hexdigest()
+    return token == expected
 
 
 # ─────────────────────────────────────────────────────────────
@@ -110,11 +121,121 @@ async def ping():
 
 
 # ─────────────────────────────────────────────────────────────
+# ADMIN LOGIN PROTECTION
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    if not ADMIN_PASSWORD:
+        return RedirectResponse(url="/", status_code=302)
+    if _is_admin_authenticated(request):
+        return RedirectResponse(url="/", status_code=302)
+    html = """
+    <!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Admin Login</title>
+    <style>body{font-family:system-ui;background:#050814;color:#f1f5f9;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
+    .card{background:rgba(15,20,40,0.9);border:1px solid rgba(255,255,255,0.07);border-radius:20px;padding:32px;max-width:380px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.4)}
+    h2{margin:0 0 12px} p{color:#64748b;font-size:0.88rem;margin:0 0 18px}
+    input{width:100%;padding:11px 15px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.07);border-radius:11px;color:#f1f5f9;font-size:0.92rem;box-sizing:border-box}
+    button{margin-top:14px;width:100%;padding:11px;background:linear-gradient(135deg,#6366f1,#818cf8);border:none;border-radius:11px;color:#fff;font-weight:600;cursor:pointer}
+    .err{color:#fb7185;font-size:0.85rem;margin-top:10px;display:none}</style>
+    </head><body><div class="card">
+    <h2>🔒 Admin Login</h2><p>Enter dashboard password to continue</p>
+    <form method="POST" action="/login"><input type="password" name="password" placeholder="Password" required autofocus><button type="submit">Login</button></form>
+    <div id="e" class="err"></div><script>const p=new URLSearchParams(location.search);if(p.get('error')){document.getElementById('e').textContent='❌ Wrong password';document.getElementById('e').style.display='block'}</script>
+    </div></body></html>
+    """
+    return HTMLResponse(html)
+
+@app.post("/login")
+async def login_action(password: str = Form("")):
+    if not ADMIN_PASSWORD:
+        return RedirectResponse(url="/", status_code=302)
+    if password == ADMIN_PASSWORD:
+        resp = RedirectResponse(url="/", status_code=303)
+        resp.set_cookie("admin_auth", hashlib.sha256(ADMIN_PASSWORD.encode()).hexdigest(), httponly=True, max_age=86400*30, samesite="lax")
+        return resp
+    return RedirectResponse(url="/login?error=1", status_code=303)
+
+@app.get("/logout")
+async def logout():
+    resp = RedirectResponse(url="/login", status_code=302)
+    resp.delete_cookie("admin_auth")
+    return resp
+
+
+# ─────────────────────────────────────────────────────────────
+# PUBLIC LEADERBOARD (no auth — for Telegram View complete button)
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/leaderboard", response_class=HTMLResponse)
+@app.get("/lb", response_class=HTMLResponse)
+async def leaderboard_public(request: Request, chat_id: Optional[str] = None, mode: str = "overall", offset: int = 0, limit: int = 10):
+    mode = (mode or "overall").strip().lower()
+    if mode not in ("overall", "today", "week"):
+        mode = "overall"
+    limit = max(1, min(50, limit))
+    offset = max(0, offset)
+    groups = db.get_all_groups()
+    # No chat_id -> show group picker
+    if not chat_id:
+        html = """
+        <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+        <title>Leaderboard — Pick a Group</title>
+        <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600&display=swap" rel="stylesheet">
+        <style>body{font-family:'Outfit',sans-serif;background:#050814;color:#f1f5f9;padding:24px} .card{background:rgba(15,20,40,0.8);border:1px solid rgba(255,255,255,0.07);border-radius:20px;padding:24px;max-width:600px;margin:0 auto} a{color:#818cf8;text-decoration:none} .g{padding:12px;border-bottom:1px solid rgba(255,255,255,0.05);display:flex;justify-content:space-between}</style>
+        </head><body><div class="card"><h2>🏆 Leaderboard</h2><p style="color:#64748b;margin:8px 0 16px;">Pick a group to view its public leaderboard (no login required)</p>
+        """
+        for gid, g in groups.items():
+            name = g.get("name") or "Unknown Group"
+            html += f'<div class="g"><span>{name} <code>{gid}</code></span><a href="/leaderboard?chat_id={gid}&mode=overall">View →</a></div>'
+        if not groups:
+            html += '<p style="color:#64748b;">No groups yet</p>'
+        html += '</div></body></html>'
+        return HTMLResponse(html)
+    # Fetch data for given chat_id
+    try:
+        ref_key = None
+        if mode != "overall":
+            try:
+                from chat_activity import get_today, get_week_start
+                ref_key = get_today() if mode == "today" else get_week_start()
+            except:
+                ref_key = None
+        entries = db.get_chat_rankings(chat_id, mode=mode, ref_key=ref_key, limit=limit, offset=offset)
+        total = db.get_chat_total_messages(chat_id, mode=mode, ref_key=ref_key)
+        total_users = db.count_chat_rankings(chat_id, mode=mode, ref_key=ref_key)
+        g = db.get_group(chat_id)
+        group_name = g.get("name", "") if g else ""
+        max_msg = max((e.get("total_messages", 0) for e in entries), default=0) or 1
+        image_url = f"/api/rankings/image?chat_id={chat_id}&mode={mode}"
+        context = {
+            "request": request,
+            "chat_id": chat_id,
+            "mode": mode,
+            "entries": entries,
+            "total": total,
+            "total_users": total_users,
+            "group_name": group_name,
+            "max_msg": max_msg,
+            "offset": offset,
+            "limit": limit,
+            "image_url": image_url,
+        }
+        return templates.TemplateResponse(request=request, name="leaderboard.html", context=context)
+    except Exception as e:
+        return HTMLResponse(f"<h1>Error</h1><p>{str(e)}</p>", status_code=500)
+
+
+# ─────────────────────────────────────────────────────────────
 # MAIN DASHBOARD
 # ─────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request, search: Optional[str] = None):
+    # Admin protection
+    if ADMIN_PASSWORD and not _is_admin_authenticated(request):
+        return RedirectResponse(url="/login", status_code=302)
     config = db.get_config()
     stats  = db.get_all_stats()
 
@@ -124,10 +245,18 @@ async def dashboard(request: Request, search: Optional[str] = None):
         users  = db.get_all_users()
         groups = db.get_all_groups()
 
+    # Ranking anti-spam live config (DB overrides env)
+    try:
+        from chat_activity import get_rank_spam_config
+        rank_spam_config = get_rank_spam_config()
+    except Exception:
+        rank_spam_config = {"max": 4, "window": 4.0, "cooldown": 600}
+
     context = {
         "request":        request,
         "config":         config,
         "tracking_config": db.get_tracking_config(),
+        "rank_spam_config": rank_spam_config,
         "stats":          stats,
         "users":          users,
         "groups":         groups,
@@ -619,6 +748,35 @@ async def antilink_toggle_group(chat_id: str = Form("")):
 
 
 # ─────────────────────────────────────────────────────────────
+# API — KEYWORD ALERT TOGGLE & WORDS
+# ─────────────────────────────────────────────────────────────
+
+@app.post("/api/keyword_alert/toggle")
+async def keyword_alert_toggle(chat_id: str = Form("")):
+    group = db.get_group(chat_id.strip())
+    if not group:
+        return JSONResponse({"ok": False, "error": "Group not found"}, status_code=404)
+    current = group.get("keyword_alert", 0)
+    new_status = 1 if not current else 0
+    db.update_group_setting(chat_id.strip(), "keyword_alert", new_status)
+    db.log_event(f"🚨 Keyword Alert toggled {'ON' if new_status else 'OFF'} for group {chat_id} via dashboard")
+    return JSONResponse({"ok": True, "keyword_alert": bool(new_status)})
+
+
+@app.post("/api/keyword_alert/words")
+async def keyword_alert_words(chat_id: str = Form(""), words: str = Form("")):
+    group = db.get_group(chat_id.strip())
+    if not group:
+        return JSONResponse({"ok": False, "error": "Group not found"}, status_code=404)
+    clean = ",".join([w.strip() for w in words.split(",") if w.strip()][:20])
+    if not clean:
+        return JSONResponse({"ok": False, "error": "No valid keywords"}, status_code=400)
+    db.update_group_setting(chat_id.strip(), "keyword_alert_words", clean)
+    db.log_event(f"🚨 Keyword Alert words updated for {chat_id}: {clean}")
+    return JSONResponse({"ok": True, "words": clean})
+
+
+# ─────────────────────────────────────────────────────────────
 # API — ACTIVE MODERATION LIST & REVOCATION (Unmute/Unban)
 # ─────────────────────────────────────────────────────────────
 
@@ -900,6 +1058,110 @@ async def remove_tracked_group(group_id: str = Form("")):
         db.remove_tracked_group(gid)
         db.log_event(f"👁️ Stopped tracking group: {gid}")
     return RedirectResponse(url="/?success=GroupTrackingStopped", status_code=303)
+
+
+# ─────────────────────────────────────────────────────────────
+# API — RANKING ANTI-SPAM CONTROL (dashboard)
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/rank_spam/status")
+async def rank_spam_status():
+    try:
+        from chat_activity import get_rank_spam_config
+        return JSONResponse(get_rank_spam_config())
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/rank_spam/update")
+async def update_rank_spam(
+    rank_spam_max: str = Form(""),
+    rank_spam_window: str = Form(""),
+    rank_spam_cooldown: str = Form(""),
+):
+    try:
+        # Validate and clamp
+        try:
+            max_v = int(rank_spam_max.strip())
+        except:
+            max_v = 4
+        try:
+            win_v = float(rank_spam_window.strip())
+        except:
+            win_v = 4.0
+        try:
+            cd_v = int(rank_spam_cooldown.strip())
+        except:
+            cd_v = 600
+        max_v = max(2, min(20, max_v))
+        win_v = max(1.0, min(60.0, win_v))
+        cd_v = max(30, min(3600, cd_v))
+
+        db.update_config("rank_spam_max", max_v)
+        db.update_config("rank_spam_window", win_v)
+        db.update_config("rank_spam_cooldown", cd_v)
+        db.log_event(f"🛡️ Ranking anti-spam updated: {max_v} msgs / {win_v:g}s -> {cd_v//60}min cooldown via dashboard")
+        return RedirectResponse(url="/?success=RankSpamUpdated", status_code=303)
+    except Exception as e:
+        return RedirectResponse(url=f"/?error=RankSpamUpdateFailed:{str(e).replace(' ','_')}", status_code=303)
+
+
+# ─────────────────────────────────────────────────────────────
+# API — LIVE LEADERBOARD FOR DASHBOARD
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/rankings")
+async def api_rankings(chat_id: str, mode: str = "overall", limit: int = 10, offset: int = 0):
+    """Fetch live rankings for a group (for dashboard). mode: overall/today/week"""
+    try:
+        mode = mode.strip().lower()
+        if mode not in ("overall", "today", "week"):
+            mode = "overall"
+        limit = max(1, min(50, limit))
+        offset = max(0, offset)
+        # Resolve ref_key for today/week
+        ref_key = None
+        if mode != "overall":
+            try:
+                from chat_activity import get_today, get_week_start
+                ref_key = get_today() if mode == "today" else get_week_start()
+            except:
+                ref_key = None
+        entries = db.get_chat_rankings(chat_id, mode=mode, ref_key=ref_key, limit=limit, offset=offset)
+        total = db.get_chat_total_messages(chat_id, mode=mode, ref_key=ref_key)
+        total_users = db.count_chat_rankings(chat_id, mode=mode, ref_key=ref_key)
+        return JSONResponse({"ok": True, "entries": entries, "total": total, "total_users": total_users, "mode": mode})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@app.get("/api/rankings/image")
+async def api_rankings_image(chat_id: str, mode: str = "overall"):
+    """Return leaderboard PNG image for a group (dashboard preview)."""
+    try:
+        mode = mode.strip().lower()
+        if mode not in ("overall", "today", "week"):
+            mode = "overall"
+        ref_key = None
+        if mode != "overall":
+            try:
+                from chat_activity import get_today, get_week_start
+                ref_key = get_today() if mode == "today" else get_week_start()
+            except:
+                ref_key = None
+        entries = db.get_chat_rankings(chat_id, mode=mode, ref_key=ref_key, limit=10, offset=0)
+        total = db.get_chat_total_messages(chat_id, mode=mode, ref_key=ref_key)
+        # Get group title
+        g = db.get_group(chat_id)
+        title = g.get("name", "") if g else ""
+        from chat_activity import generate_leaderboard_image
+        label = mode.capitalize()
+        img_bytes = generate_leaderboard_image(entries, label.upper(), title, total_msgs=total)
+        if img_bytes is None:
+            return JSONResponse({"ok": False, "error": "No data to generate image"}, status_code=404)
+        return Response(content=img_bytes, media_type="image/png", headers={"Content-Disposition": f'inline; filename="leaderboard_{chat_id}_{mode}.png"'})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Leaderboard — {{ group_name or 'Group' }} ({{ mode }})</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Outfit',sans-serif;background:#050814;color:#f1f5f9;min-height:100vh;padding:24px}
+body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse 80% 60% at 10% 0%,rgba(99,102,241,0.12) 0%,transparent 60%),radial-gradient(ellipse 60% 50% at 90% 100%,rgba(244,63,94,0.08) 0%,transparent 50%);pointer-events:none}
+.container{max-width:900px;margin:0 auto;position:relative;z-index:1}
+.header{text-align:center;margin-bottom:20px}
+.header h1{font-size:1.8rem;font-weight:800;background:linear-gradient(135deg,#818cf8,#06b6d4);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.header p{color:#64748b;font-size:0.9rem;margin-top:6px}
+.tabs{display:flex;gap:8px;justify-content:center;margin-bottom:18px;flex-wrap:wrap}
+.tab{padding:8px 18px;border-radius:100px;border:1px solid rgba(255,255,255,0.07);background:rgba(255,255,255,0.04);color:#64748b;font-weight:600;font-size:0.88rem;text-decoration:none;transition:0.18s}
+.tab.active{background:rgba(99,102,241,0.2);color:#818cf8;border-color:rgba(99,102,241,0.3)}
+.card{background:rgba(15,20,40,0.8);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.07);border-radius:20px;padding:18px;box-shadow:0 8px 32px rgba(0,0,0,0.4)}
+.tabs2{display:flex;gap:8px;justify-content:center;margin:14px 0}
+.badge{display:inline-flex;align-items:center;padding:4px 10px;border-radius:100px;font-size:0.78rem;font-weight:600}
+.badge-primary{background:rgba(99,102,241,0.15);color:#818cf8}
+.badge-muted{background:rgba(255,255,255,0.06);color:#64748b}
+img.leader{max-width:100%;border-radius:14px;border:1px solid rgba(255,255,255,0.07);display:block;margin:0 auto}
+table{width:100%;border-collapse:collapse;margin-top:16px}
+th{padding:10px 12px;color:#64748b;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.8px;border-bottom:1px solid rgba(255,255,255,0.07);text-align:left}
+td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,0.05);font-size:0.88rem}
+tr:last-child td{border-bottom:none}
+.bar{height:8px;background:rgba(255,255,255,0.08);border-radius:100px;overflow:hidden;width:100px}
+.fill{height:100%;border-radius:100px;background:linear-gradient(to right,#f43f5e,#f59e0b)}
+.empty{text-align:center;padding:30px;color:#64748b}
+a{color:#818cf8}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>🏆 Leaderboard</h1>
+    <p>{{ group_name or 'Unknown Group' }} — <code>{{ chat_id }}</code> • {{ mode }} • {{ total }} total messages</p>
+  </div>
+  <div class="tabs">
+    <a class="tab {% if mode=='overall' %}active{% endif %}" href="?chat_id={{ chat_id }}&mode=overall">Overall</a>
+    <a class="tab {% if mode=='today' %}active{% endif %}" href="?chat_id={{ chat_id }}&mode=today">Today</a>
+    <a class="tab {% if mode=='week' %}active{% endif %}" href="?chat_id={{ chat_id }}&mode=week">Week</a>
+  </div>
+
+  {% if image_url %}
+  <div class="card" style="margin-bottom:16px;text-align:center;">
+    <img class="leader" src="{{ image_url }}" alt="Leaderboard image">
+    <div style="margin-top:10px;"><a href="{{ image_url }}" target="_blank" style="font-size:0.85rem;">Open image directly</a></div>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <div style="font-weight:700;">Top {{ entries|length }} / {{ total_users }}</div>
+      <div style="display:flex;gap:8px;">
+        <span class="badge badge-primary">Total: {{ total }}</span>
+        <span class="badge badge-muted">Users: {{ total_users }}</span>
+      </div>
+    </div>
+    {% if entries %}
+    <table>
+      <thead><tr><th>#</th><th>User</th><th>Messages</th><th>Share</th></tr></thead>
+      <tbody>
+        {% for e in entries %}
+        <tr>
+          <td>{% if loop.index==1 %}🥇{% elif loop.index==2 %}🥈{% elif loop.index==3 %}🥉{% else %}#{{ loop.index + offset }}{% endif %}</td>
+          <td><div style="font-weight:600;">{{ e.display_name }}</div><small style="color:#64748b;">{% if e.username %}@{{ e.username }} {% endif %}<code>{{ e.user_id }}</code></small></td>
+          <td><span class="badge badge-primary">{{ e.total_messages }}</span></td>
+          <td><div class="bar"><div class="fill" style="width: {{ (e.total_messages / max_msg * 100) | int if max_msg else 0 }}%"></div></div></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if total_users > limit %}
+    <div class="tabs2">
+      {% if offset > 0 %}<a class="tab" href="?chat_id={{ chat_id }}&mode={{ mode }}&offset={{ offset - limit }}">⬅️ Previous</a>{% endif %}
+      <span class="badge badge-muted">Page {{ (offset // limit) + 1 }} / {{ ((total_users + limit - 1)//limit) }}</span>
+      {% if offset + limit < total_users %}<a class="tab" href="?chat_id={{ chat_id }}&mode={{ mode }}&offset={{ offset + limit }}">Next ➡️</a>{% endif %}
+    </div>
+    {% endif %}
+    {% else %}
+    <div class="empty">No rankings yet — start chatting!</div>
+    {% endif %}
+  </div>
+  <p style="text-align:center;color:#64748b;font-size:0.78rem;margin-top:16px;">Public leaderboard — no login required. Admin panel at <a href="/">/</a> may require password.</p>
+</div>
+</body>
+</html>

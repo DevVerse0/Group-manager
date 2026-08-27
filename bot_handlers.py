@@ -19,6 +19,9 @@ _msg_timestamps = collections.defaultdict(collections.deque)
 _SPAM_MAX    = 5    # max messages
 _SPAM_WINDOW = 3.0  # seconds
 
+# ── Keyword alert cooldown: {(chat_id, user_id, keyword): last_alert_timestamp} ──
+_keyword_alert_cooldown = {}
+
 # --- Performance Caches ---
 _ensured_groups = set() # {chat_id}
 _ensured_users  = set() # {user_id}
@@ -889,6 +892,10 @@ def register_handlers(bot):
                 "• /mute - Silence user\n"
                 "• /unmute - Restore chat\n"
                 "• /warn - Formal warning (3 = ban)\n\n"
+                "• /removewarn - Remove 1 warning (alias: /unwarn, /delwarn)\n"
+                "• /resetwarn - Clear all warnings (alias: /clearwarn)\n\n"
+                "• /keywordalert - Toggle keyword alert (admins)\n"
+                "• /setkeywords - Set alert keywords (e.g. @admin,help)\n"
                 "<b>⏰ Duration Formats:</b>\n"
                 "1m (minute), 1h (hour), 1d (day), 1w (week), 1mn (month), 1y (year)\n\n"
                 "<b>👮 Admin Tools:</b>\n"
@@ -1401,6 +1408,98 @@ def register_handlers(bot):
                 bot.reply_to(message, f"⚠️ 3 warnings reached, but I couldn't ban them: {e}")
         else:
             bot.reply_to(message, f"⚠️ User <b>{name}</b> (<code>{t_id}</code>) warned. (<b>{warnings}/3</b>)", parse_mode="HTML")
+
+    # ── /removewarn /unwarn /delwarn /resetwarn /clearwarn ──
+    @bot.message_handler(commands=['removewarn', 'unwarn', 'delwarn', 'resetwarn', 'clearwarn', 'resetwarnings'])
+    def cmd_removewarn(message):
+        if message.chat.type not in ['group', 'supergroup']:
+            return
+        if not is_admin(bot, message.chat.id, message.from_user.id) and not is_owner(message.from_user.username): return reply_not_admin(bot, message)
+        target = get_target_user(message)
+        if not target:
+            return bot.reply_to(message, "Reply to a user or provide their ID/@username to remove warning.")
+        t_id = target.id
+        if not can_act_on(bot, message.chat.id, message.from_user.id, message.from_user.username, t_id, getattr(target, 'username', None)):
+            return bot.reply_to(message, "Cannot act on this user.")
+        cmd_text = message.text.split()[0].lower()
+        cmd = cmd_text.split('@')[0].replace('/', '')
+        name = getattr(target, 'first_name', 'Unknown')
+        if cmd in ('resetwarn', 'clearwarn', 'resetwarnings'):
+            db.reset_warnings(t_id)
+            bot.reply_to(message, f"All warnings for <b>{name}</b> (<code>{t_id}</code>) have been <b>cleared</b> (0/3).", parse_mode="HTML")
+            db.log_event(f"Admin {message.from_user.id} cleared warnings for {t_id} in {message.chat.id}")
+        else:
+            user_data = db.get_user(t_id)
+            before = user_data.get("warnings", 0) if user_data else 0
+            if before <= 0:
+                return bot.reply_to(message, f"<b>{name}</b> (<code>{t_id}</code>) has no warnings to remove.", parse_mode="HTML")
+            after = db.remove_warning(t_id)
+            bot.reply_to(message, f"Removed 1 warning from <b>{name}</b> (<code>{t_id}</code>). Now <b>{after}/3</b>.", parse_mode="HTML")
+            db.log_event(f"Admin {message.from_user.id} removed 1 warning for {t_id} in {message.chat.id} ({before}->{after})")
+
+    # ── /keywordalert — Keyword Alert toggle ──
+    def build_keyword_alert_markup(chat_id, is_on):
+        mk = InlineKeyboardMarkup()
+        mk.row(
+            InlineKeyboardButton("✅ ON" if is_on else "🔘 ON", callback_data=f"keywordalert:on:{chat_id}"),
+            InlineKeyboardButton("🔘 OFF" if is_on else "❌ OFF", callback_data=f"keywordalert:off:{chat_id}")
+        )
+        return mk
+
+    @bot.message_handler(commands=['keywordalert', 'keyword_alert'])
+    def cmd_keywordalert(message):
+        if message.chat.type not in ['group', 'supergroup']:
+            return
+        if not is_admin(bot, message.chat.id, message.from_user.id) and not is_owner(message.from_user.username): return reply_not_admin(bot, message)
+        group = db.get_group(message.chat.id)
+        is_on = bool(group.get("keyword_alert", 0))
+        words = group.get("keyword_alert_words", "@admin,admin,help,support") or "@admin,admin,help,support"
+        markup = build_keyword_alert_markup(message.chat.id, is_on)
+        text = f"🚨 <b>Keyword Alert</b>\n\nStatus: {'✅ ON' if is_on else '❌ OFF'}\nKeywords: <code>{html.escape(str(words))}</code>\n\nUse <code>/setkeywords word1,word2,word3</code> to set keywords.\nExample: <code>/setkeywords @admin,help,support,urgent</code>"
+        bot.reply_to(message, text, reply_markup=markup, parse_mode="HTML")
+
+    @bot.message_handler(commands=['setkeywords', 'setkeyword', 'set_keyword'])
+    def cmd_setkeywords(message):
+        if message.chat.type not in ['group', 'supergroup']:
+            return
+        if not is_admin(bot, message.chat.id, message.from_user.id) and not is_owner(message.from_user.username): return reply_not_admin(bot, message)
+        parts = message.text.split(None, 1)
+        if len(parts) < 2 or not parts[1].strip():
+            return bot.reply_to(message, "Usage: <code>/setkeywords word1,word2,word3</code>\nExample: <code>/setkeywords @admin,help,urgent</code>", parse_mode="HTML")
+        words = parts[1].strip()
+        # Basic validation: 1-20 keywords, each 1-30 chars
+        keywords = [w.strip() for w in words.split(",") if w.strip()]
+        if not keywords:
+            return bot.reply_to(message, "No valid keywords found.")
+        if len(keywords) > 20:
+            return bot.reply_to(message, "Too many keywords (max 20).")
+        clean = ",".join(keywords[:20])
+        db.update_group_setting(message.chat.id, "keyword_alert_words", clean)
+        db.log_event(f"🚨 Keywords set for {message.chat.id}: {clean}")
+        bot.reply_to(message, f"✅ Keywords updated: <code>{html.escape(clean)}</code>", parse_mode="HTML")
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("keywordalert:"))
+    def keywordalert_callback(call):
+        try:
+            _, action, chat_id = call.data.split(":", 2)
+            chat_id = int(chat_id)
+        except:
+            return bot.answer_callback_query(call.id, "Invalid data")
+        if int(call.message.chat.id) != int(chat_id):
+            return bot.answer_callback_query(call.id, "Not allowed for this group")
+        if not is_admin(bot, chat_id, call.from_user.id) and not is_owner(call.from_user.username):
+            return reply_not_admin(bot, call)
+        new_status = 1 if action == "on" else 0
+        db.update_group_setting(chat_id, "keyword_alert", new_status)
+        is_on = bool(new_status)
+        words = db.get_group(chat_id).get("keyword_alert_words", "@admin,admin,help,support") or "@admin,admin,help,support"
+        markup = build_keyword_alert_markup(chat_id, is_on)
+        text = f"🚨 <b>Keyword Alert</b>\n\nStatus: {'✅ ON' if is_on else '❌ OFF'}\nKeywords: <code>{html.escape(str(words))}</code>\n\nUse <code>/setkeywords word1,word2,word3</code> to set keywords."
+        try:
+            bot.edit_message_text(text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode="HTML")
+        except:
+            pass
+        bot.answer_callback_query(call.id, f"Keyword Alert {'Enabled' if is_on else 'Disabled'}")
 
     # ── /del ──
     @bot.message_handler(commands=['del'])
@@ -2181,6 +2280,10 @@ def register_handlers(bot):
             telebot.types.BotCommand("mute",         "Restrict user from talking"),
             telebot.types.BotCommand("unmute",       "Restore talking privileges"),
             telebot.types.BotCommand("warn",         "Issue a formal warning"),
+            telebot.types.BotCommand("removewarn",   "Remove 1 warning"),
+            telebot.types.BotCommand("resetwarn",    "Clear all warnings"),
+            telebot.types.BotCommand("keywordalert", "Toggle keyword alert"),
+            telebot.types.BotCommand("setkeywords",  "Set keyword alert words"),
             telebot.types.BotCommand("lock",         "Lock the group"),
             telebot.types.BotCommand("unlock",       "Unlock the group"),
             telebot.types.BotCommand("promote",      "Promote to Administrator"),
@@ -2680,6 +2783,77 @@ def register_handlers(bot):
                     except Exception:
                         pass
                 return  # stop processing after bad word match
+
+        # ── 🚨 Keyword Alert — notify admins when trigger word appears ──
+        if group.get("keyword_alert", 0) and not user_is_admin and not user_is_owner:
+            try:
+                raw_words = group.get("keyword_alert_words", "") or "@admin,admin,help,support"
+                if isinstance(raw_words, list):
+                    keywords = [str(w).strip().lower() for w in raw_words if str(w).strip()]
+                else:
+                    keywords = [w.strip().lower() for w in str(raw_words).split(",") if w.strip()]
+                matched = None
+                for kw in keywords:
+                    if not kw:
+                        continue
+                    if kw.startswith("@"):
+                        if kw in text_lower:
+                            matched = kw
+                            break
+                    else:
+                        if re.search(rf"\b{re.escape(kw)}\b", text_lower):
+                            matched = kw
+                            break
+                if matched:
+                    now = _time.time()
+                    ck = (message.chat.id, message.from_user.id, matched)
+                    last = _keyword_alert_cooldown.get(ck, 0)
+                    if now - last >= 60:
+                        _keyword_alert_cooldown[ck] = now
+                        try:
+                            admins = bot.get_chat_administrators(message.chat.id)
+                            mentions = []
+                            for ad in admins:
+                                if not ad.user.is_bot:
+                                    if ad.user.username:
+                                        mentions.append(f"@{ad.user.username}")
+                                    else:
+                                        mentions.append(f"<a href='tg://user?id={ad.user.id}'>{html.escape(ad.user.first_name)}</a>")
+                            admin_text = " ".join(mentions) if mentions else "Admins"
+                        except:
+                            admin_text = "Admins"
+                        try:
+                            safe_name = html.escape(message.from_user.first_name or "User")
+                            safe_text = html.escape(content[:200])
+                            bot.send_message(
+                                message.chat.id,
+                                f"🚨 <b>Keyword Alert!</b>\n\n"
+                                f"👤 {safe_name} (<code>{message.from_user.id}</code>) mentioned <b>{html.escape(matched)}</b>\n"
+                                f"💬 Message: <i>{safe_text}</i>\n\n"
+                                f"👮 {admin_text} — please check!",
+                                parse_mode="HTML"
+                            )
+                            db.log_event(f"🚨 Keyword alert '{matched}' by {message.from_user.id} in {message.chat.id}")
+                            try:
+                                for ad in bot.get_chat_administrators(message.chat.id):
+                                    if not ad.user.is_bot:
+                                        try:
+                                            bot.send_message(
+                                                ad.user.id,
+                                                f"🚨 <b>Keyword Alert in {html.escape(message.chat.title or 'Group')}</b>\n\n"
+                                                f"👤 {safe_name} (<code>{message.from_user.id}</code>) said: <i>{safe_text}</i>\n"
+                                                f"🔑 Keyword: <b>{html.escape(matched)}</b>\n"
+                                                f"🏘️ Group: {html.escape(message.chat.title or str(message.chat.id))} (<code>{message.chat.id}</code>)",
+                                                parse_mode="HTML"
+                                            )
+                                        except:
+                                            pass
+                            except:
+                                pass
+                        except Exception as e:
+                            logger.error(f"Keyword alert send failed: {e}")
+            except Exception as e:
+                logger.error(f"Keyword alert error: {e}")
 
         # ── 🔍 Auto-reply filters ──
         filters = group.get("filters", {})

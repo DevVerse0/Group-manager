@@ -14,11 +14,13 @@ This module does not modify any existing bot feature. It plugs into the bot
 through `register_chat_handlers(bot)` and `track_group_message(bot, message)`.
 """
 
+import collections
 import html
 import io
 import logging
 import os
 import re
+import time as _time
 from datetime import datetime, timedelta, timezone
 
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -26,6 +28,51 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database import db
 
 logger = logging.getLogger(__name__)
+
+# ─────────────────────────────────────────────────────────────
+# RANKING ANTI-SPAM: flood -> 10 min cooldown (independent of moderation)
+# ─────────────────────────────────────────────────────────────
+# If a user sends > RANK_SPAM_MAX messages within RANK_SPAM_WINDOW seconds,
+# their messages will NOT count toward chat rankings for RANK_SPAM_COOLDOWN seconds.
+# This catches sticker/text/gif spam regardless of content (not just duplicates).
+# Configurable via env vars + dashboard (DB overrides env). Defaults: 4 msgs / 4 sec -> 10 min block.
+_RANK_SPAM_MAX_DEFAULT = int(os.getenv("RANK_SPAM_MAX", "4").strip() or "4")
+_RANK_SPAM_WINDOW_DEFAULT = float(os.getenv("RANK_SPAM_WINDOW", "4.0").strip() or "4.0")
+_RANK_SPAM_COOLDOWN_DEFAULT = int(os.getenv("RANK_SPAM_COOLDOWN", "600").strip() or "600")  # 600s = 10 min
+
+# Keep old names as aliases for env fallback compatibility
+_RANK_SPAM_MAX = _RANK_SPAM_MAX_DEFAULT
+_RANK_SPAM_WINDOW = _RANK_SPAM_WINDOW_DEFAULT
+_RANK_SPAM_COOLDOWN = _RANK_SPAM_COOLDOWN_DEFAULT
+
+_rank_timestamps = collections.defaultdict(collections.deque)  # {(chat_id, user_id): deque[timestamp]}
+_rank_cooldown_until: dict[tuple, float] = {}  # {(chat_id, user_id): unix_expire}
+
+def _get_rank_spam_settings():
+    """Fetch live ranking anti-spam settings (DB overrides env). Returns (max, window, cooldown)."""
+    try:
+        cfg = db.get_config()
+        # DB values are stored via db.update_config -> json serialized, so they come back as int/float
+        max_v = cfg.get("rank_spam_max", _RANK_SPAM_MAX_DEFAULT)
+        win_v = cfg.get("rank_spam_window", _RANK_SPAM_WINDOW_DEFAULT)
+        cd_v = cfg.get("rank_spam_cooldown", _RANK_SPAM_COOLDOWN_DEFAULT)
+        # Coerce types safely
+        max_v = int(max_v) if str(max_v).strip() else _RANK_SPAM_MAX_DEFAULT
+        win_v = float(win_v) if str(win_v).strip() else _RANK_SPAM_WINDOW_DEFAULT
+        cd_v = int(cd_v) if str(cd_v).strip() else _RANK_SPAM_COOLDOWN_DEFAULT
+        # Clamp to sane ranges
+        max_v = max(2, min(20, max_v))
+        win_v = max(1.0, min(60.0, win_v))
+        cd_v = max(30, min(3600, cd_v))
+        return max_v, win_v, cd_v
+    except Exception:
+        return _RANK_SPAM_MAX_DEFAULT, _RANK_SPAM_WINDOW_DEFAULT, _RANK_SPAM_COOLDOWN_DEFAULT
+
+
+def get_rank_spam_config():
+    """Public helper for dashboard/API to read current settings."""
+    max_v, win_v, cd_v = _get_rank_spam_settings()
+    return {"max": max_v, "window": win_v, "cooldown": cd_v}
 
 # ─────────────────────────────────────────────────────────────
 # MILESTONES
@@ -184,6 +231,15 @@ def build_chat_stats_text(stats):
     ])
 
 
+def _public_base():
+    """Public base URL for leaderboard website (for Telegram URL buttons)."""
+    base = (os.getenv("PUBLIC_URL") or os.getenv("LEADERBOARD_URL") or os.getenv("RENDER_EXTERNAL_URL") or "").strip().rstrip("/")
+    # Ensure it looks like a URL
+    if base and not base.startswith("http"):
+        base = "https://" + base
+    return base
+
+
 def build_mode_markup(mode, chat_id):
     mk = InlineKeyboardMarkup()
     mk.row(
@@ -208,6 +264,15 @@ def build_mode_markup(mode, chat_id):
             callback_data=f"rank:full:{mode}:{chat_id}:1",
         )
     )
+    # Public website button — visible to everyone, no admin needed (requires PUBLIC_URL env)
+    base = _public_base()
+    if base:
+        mk.row(
+            InlineKeyboardButton(
+                "🌐 View on Website",
+                url=f"{base}/leaderboard?chat_id={chat_id}&mode={mode}",
+            )
+        )
     return mk
 
 
@@ -221,6 +286,9 @@ def build_full_markup(mode, chat_id, page, total_pages):
     if nav:
         mk.row(*nav)
     mk.row(InlineKeyboardButton("🔙 Back to Top 10", callback_data=f"rank:back:{mode}:{chat_id}"))
+    base = _public_base()
+    if base:
+        mk.row(InlineKeyboardButton("🌐 View on Website", url=f"{base}/leaderboard?chat_id={chat_id}&mode={mode}"))
     return mk
 
 
@@ -781,17 +849,74 @@ def generate_leaderboard_image(entries, mode_label="OVERALL", group_title="", to
             rw_, rh_ = 16, 16
         d.text((bx0 + 19 - rw_ / 2, center - rh_ / 2 - 1), rs, font=rank_font, fill=mtext)
 
-        # username — unicode runs, truncated to fit, always visible
-        name = clean_name_for_image(e.get("display_name") or "Unknown")
+        # username — unicode runs, truncated to fit, NEVER blank (totally fixed)
+        raw_display = e.get("display_name") or "Unknown"
+        uid_str = str(e.get("user_id") or "")
+        name = clean_name_for_image(raw_display)
         name_runs = _truncate_runs(d, name, 26, True, name_max_w)
+        fallback_reason = None
         if not name_runs:
-            name_runs = _make_runs("Unknown", 26, True)
-        if name_runs:
-            _draw_runs(d, (name_x, center - 17), name_runs, HI)
-        else:
-            # Safety net: explicit draw even if every unicode run failed.
-            d.text((name_x, center - 17), name, font=_get_font(26, bold=True), fill=HI)
-            logger.debug(f"LEADERBOARD IMAGE USER: name={name!r} messages={count} (used direct draw)")
+            # Try username as fallback (often ASCII even when display name is emoji/Bangla)
+            uname = (e.get("username") or "").strip()
+            if uname:
+                uname_clean = clean_name_for_image(uname)
+                # username is always ASCII, so _make_runs with load_default will succeed
+                uname_runs = _truncate_runs(d, uname_clean, 26, True, name_max_w)
+                if uname_runs:
+                    name = uname_clean
+                    name_runs = uname_runs
+                    fallback_reason = f"display_name={raw_display!r} -> username={uname!r}"
+                else:
+                    uname_runs2 = _make_runs(uname_clean, 26, True)
+                    if uname_runs2:
+                        name = uname_clean
+                        name_runs = uname_runs2
+                        fallback_reason = f"display_name={raw_display!r} -> username2={uname!r}"
+            if not name_runs and uid_str:
+                # Last resort: show user ID so row is never blank
+                id_label = f"ID:{uid_str[-6:]}"
+                id_runs = _truncate_runs(d, id_label, 26, True, name_max_w)
+                if not id_runs:
+                    id_runs = _make_runs(id_label, 26, True)
+                if id_runs:
+                    name = id_label
+                    name_runs = id_runs
+                    fallback_reason = f"display_name={raw_display!r} -> id_fallback={id_label}"
+            if not name_runs:
+                # Fallback to "Unknown" (ASCII, always renderable via load_default)
+                unknown_runs = _make_runs("Unknown", 26, True)
+                if not unknown_runs:
+                    # Force create runs via default font
+                    try:
+                        from PIL import ImageFont
+                        unknown_runs = [("Unknown", ImageFont.load_default())]
+                    except Exception:
+                        unknown_runs = None
+                if unknown_runs:
+                    name = "Unknown"
+                    name_runs = unknown_runs
+                    fallback_reason = f"display_name={raw_display!r} -> Unknown"
+                else:
+                    name = raw_display if raw_display else "Unknown"
+                    fallback_reason = f"display_name={raw_display!r} -> raw_fallback"
+        if fallback_reason:
+            logger.warning(f"Leaderboard name fallback Rank {rank}: {fallback_reason} (uid={uid_str})")
+        # Draw — try unicode runs first, else ultimate fallback with default font (never blank)
+        try:
+            if name_runs:
+                _draw_runs(d, (name_x, center - 17), name_runs, HI)
+            else:
+                raise ValueError("no runs even after all fallbacks")
+        except Exception as draw_err:
+            try:
+                from PIL import ImageFont
+                fallback_font = ImageFont.load_default()
+            except Exception:
+                fallback_font = _get_font(26, bold=True)
+            # Ensure something is drawn even if all else fails
+            safe_text = name if name and name.strip() else (f"ID:{uid_str}" if uid_str else "Unknown")
+            d.text((name_x, center - 17), safe_text, font=fallback_font, fill=HI)
+            logger.error(f"LEADERBOARD DRAW FAILED Rank {rank}: name={name!r} err={draw_err} -> drew safe_text={safe_text!r}")
 
         # proportional rounded progress bar (longest = #1 = 100%)
         bh = 28
@@ -854,6 +979,55 @@ def announce_group_milestone(bot, chat_id, milestone):
 # ─────────────────────────────────────────────────────────────
 # MESSAGE TRACKING ENTRY POINT
 # ─────────────────────────────────────────────────────────────
+def _is_rank_spam(chat_id, user_id) -> bool:
+    """Return True if this message should NOT count (user is in cooldown or just triggered flood).
+
+    Generic flood: any content type (text/sticker/gif/photo) counts equally.
+    Uses live settings from DB (dashboard) with env fallback.
+    """
+    max_v, win_v, cd_v = _get_rank_spam_settings()
+    now = _time.time()
+    key = (str(chat_id), str(user_id))
+
+    # 1) Still in cooldown?
+    until = _rank_cooldown_until.get(key)
+    if until is not None:
+        if now < until:
+            return True, False  # in cooldown, but not newly triggered
+        # cooldown expired
+        _rank_cooldown_until.pop(key, None)
+
+    # 2) Rate check: > max_v msgs within win_v ?
+    dq = _rank_timestamps[key]
+    dq.append(now)
+    while dq and dq[0] < now - win_v:
+        dq.popleft()
+    if len(dq) > max_v:
+        # trigger cooldown — clear deque so we don't re-trigger every msg
+        _rank_cooldown_until[key] = now + cd_v
+        dq.clear()
+        logger.info(f"Ranking anti-spam: user {user_id} in chat {chat_id} flooded ({max_v}+ in {win_v}s) -> blocked for {cd_v}s")
+        return True, True  # (is_spam, just_triggered)
+    return False, False
+
+
+def _notify_rank_cooldown(bot, chat_id, user):
+    """Send group notification when a user hits ranking cooldown."""
+    try:
+        _, _, cd_v = _get_rank_spam_settings()
+        name = html.escape(get_display_name(user) or "User")
+        mins = cd_v // 60
+        mins_label = f"{mins} minutes" if mins != 1 else "1 minute"
+        text = (
+            f"⚠️ <b>Ranking Cooldown!</b>\n\n"
+            f"👤 {name} (<code>{user.id}</code>) has been put on <b>ranking cooldown</b> for <b>{mins_label}</b>!\n"
+            f"💬 Their messages will <b>not count</b> toward the leaderboard for the next {mins_label}."
+        )
+        bot.send_message(chat_id, text, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Rank cooldown notify failed: {e}")
+
+
 def track_group_message(bot, message):
     """Record a single valid group message. Never raises (failures are logged)."""
     try:
@@ -870,6 +1044,13 @@ def track_group_message(bot, message):
 
         group = db.get_group(chat.id)
         if not group or not group.get("chat_tracking", 1):
+            return
+
+        # ── Ranking anti-spam: flood -> 10 min no-count (text/sticker/gif all covered) ──
+        is_spam, just_triggered = _is_rank_spam(chat.id, user.id)
+        if is_spam:
+            if just_triggered:
+                _notify_rank_cooldown(bot, chat.id, user)
             return
 
         today = get_today()

@@ -17,6 +17,10 @@ services:
         sync: false          # Optional: support channel username (no @)
       - key: DATABASE_URL
         sync: false          # PostgreSQL URL (e.g. Neon). Leave unset to use the bundled manager.db (SQLite)
+      - key: ADMIN_PASSWORD
+        sync: false          # Optional: set a password to protect the dashboard (leave unset for open access)
+      - key: PUBLIC_URL
+        sync: false          # Optional: public URL for leaderboard website buttons (e.g. https://your-app.onrender.com) — enables "View on Website" in Telegram
       - key: CHAT_ACTIVITY_ENABLED
         value: "1"           # Master switch for the Chat Activity system (1 = on, 0 = off)
       - key: CHAT_ACTIVITY_TIMEZONE
