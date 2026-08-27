@@ -1073,17 +1073,24 @@ def track_group_message(bot, message):
     try:
         chat = message.chat
         user = message.from_user
+        logger.info(f"track_group_message called: chat {getattr(chat, 'id', '?')} user {getattr(user, 'id', '?')} type {getattr(chat, 'type', '?')} is_bot={getattr(user, 'is_bot', False)}")
         if chat is None or user is None:
+            logger.info("track_group_message: chat or user is None, return")
             return
         if chat.type not in ("group", "supergroup"):
+            logger.info(f"track_group_message: wrong chat type {chat.type}, return")
             return
         if getattr(user, "is_bot", False):
+            logger.info("track_group_message: is_bot, return")
             return
         if not chat_activity_enabled():
+            logger.info("track_group_message: chat_activity disabled, return")
             return
 
         group = db.get_group(chat.id)
+        logger.info(f"track_group_message: group {chat.id} chat_tracking={group.get('chat_tracking', 1) if group else 'no group'}")
         if not group or not group.get("chat_tracking", 1):
+            logger.info("track_group_message: chat_tracking off, return")
             return
 
         # ── Ranking anti-spam: flood -> 10 min no-count (text/sticker/gif all covered) ──
