@@ -1041,6 +1041,7 @@ def _is_rank_spam(chat_id, user_id) -> bool:
     dq.append(now)
     while dq and dq[0] < now - win_v:
         dq.popleft()
+    logger.info(f"Ranking spam check: user {user_id} chat {chat_id} dq_len={len(dq)}/{max_v} window={win_v}s cooldown={cd_v}s")
     if len(dq) > max_v:
         # trigger cooldown — clear deque so we don't re-trigger every msg
         _rank_cooldown_until[key] = now + cd_v
