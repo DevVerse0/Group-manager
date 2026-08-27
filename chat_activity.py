@@ -258,19 +258,19 @@ def build_mode_markup(mode, chat_id):
             callback_data=f"rank:mode:week:{chat_id}",
         ),
     )
-    mk.row(
-        InlineKeyboardButton(
-            "📊 View complete leaderboard ↗",
-            callback_data=f"rank:full:{mode}:{chat_id}:1",
-        )
-    )
-    # Public website button — visible to everyone, no admin needed (requires PUBLIC_URL env)
     base = _public_base()
     if base:
         mk.row(
             InlineKeyboardButton(
-                "🌐 View on Website",
+                "📊 View complete leaderboard ↗",
                 url=f"{base}/leaderboard?chat_id={chat_id}&mode={mode}",
+            )
+        )
+    else:
+        mk.row(
+            InlineKeyboardButton(
+                "📊 View complete leaderboard ↗",
+                callback_data=f"rank:full:{mode}:{chat_id}:1",
             )
         )
     return mk
