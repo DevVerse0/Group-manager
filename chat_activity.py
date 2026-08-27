@@ -901,9 +901,37 @@ def generate_leaderboard_image(entries, mode_label="OVERALL", group_title="", to
                     fallback_reason = f"display_name={raw_display!r} -> raw_fallback"
         if fallback_reason:
             logger.warning(f"Leaderboard name fallback Rank {rank}: {fallback_reason} (uid={uid_str})")
-        # Draw — try unicode runs first, else ultimate fallback with default font (never blank)
+        # Draw — if fallback was used, draw directly with guaranteed font (ASCII username/ID always works)
+        # Otherwise use unicode-aware runs for original display_name, but verify width
         try:
-            if name_runs:
+            if fallback_reason:
+                # Fallback names are ASCII (username/ID/Unknown) — use simple direct draw for guaranteed visibility
+                try:
+                    from PIL import ImageFont
+                    fallback_font = ImageFont.load_default()
+                    latin_bold = _get_font(26, bold=True)
+                    use_font = latin_bold if latin_bold else fallback_font
+                except Exception:
+                    use_font = _get_font(26, bold=True)
+                display_text = name
+                try:
+                    w = d.textlength(display_text, font=use_font)
+                    if w > name_max_w:
+                        while display_text and d.textlength(display_text + "…", font=use_font) > name_max_w:
+                            display_text = display_text[:-1]
+                        display_text = display_text.rstrip() + "…"
+                except:
+                    display_text = name[:20] + "…" if len(name) > 20 else name
+                d.text((name_x, center - 17), display_text, font=use_font, fill=HI)
+                logger.info(f"Leaderboard fallback draw Rank {rank}: drew '{display_text}' with fallback font")
+            elif name_runs:
+                # Verify runs actually have width — if 0, fallback to direct draw
+                try:
+                    w = _runs_width(d, name_runs)
+                except:
+                    w = -1
+                if w < 1:
+                    raise ValueError(f"runs width 0 for name={name!r} rank={rank}")
                 _draw_runs(d, (name_x, center - 17), name_runs, HI)
             else:
                 raise ValueError("no runs even after all fallbacks")
@@ -913,7 +941,6 @@ def generate_leaderboard_image(entries, mode_label="OVERALL", group_title="", to
                 fallback_font = ImageFont.load_default()
             except Exception:
                 fallback_font = _get_font(26, bold=True)
-            # Ensure something is drawn even if all else fails
             safe_text = name if name and name.strip() else (f"ID:{uid_str}" if uid_str else "Unknown")
             d.text((name_x, center - 17), safe_text, font=fallback_font, fill=HI)
             logger.error(f"LEADERBOARD DRAW FAILED Rank {rank}: name={name!r} err={draw_err} -> drew safe_text={safe_text!r}")
