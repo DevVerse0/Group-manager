@@ -911,8 +911,6 @@ def generate_leaderboard_image(entries, mode_label="OVERALL", group_title="", to
                     fallback_reason = f"display_name={raw_display!r} -> raw_fallback"
         if fallback_reason:
             logger.warning(f"Leaderboard name fallback Rank {rank}: {fallback_reason} (uid={uid_str})")
-        else:
-            logger.info(f"Leaderboard name OK Rank {rank}: name={name!r} uid={uid_str}")
         # Draw — if fallback was used, draw directly with guaranteed font (ASCII username/ID always works)
         # Otherwise use unicode-aware runs for original display_name, but verify width
         try:
@@ -935,7 +933,6 @@ def generate_leaderboard_image(entries, mode_label="OVERALL", group_title="", to
                 except:
                     display_text = name[:20] + "…" if len(name) > 20 else name
                 d.text((name_x, center - 17), display_text, font=use_font, fill=HI)
-                logger.info(f"Leaderboard fallback draw Rank {rank}: drew '{display_text}' with fallback font")
             elif name_runs:
                 # Verify runs actually have width — if 0, fallback to direct draw
                 try:
@@ -1041,7 +1038,6 @@ def _is_rank_spam(chat_id, user_id) -> bool:
     dq.append(now)
     while dq and dq[0] < now - win_v:
         dq.popleft()
-    logger.info(f"Ranking spam check: user {user_id} chat {chat_id} dq_len={len(dq)}/{max_v} window={win_v}s cooldown={cd_v}s")
     if len(dq) > max_v:
         # trigger cooldown — clear deque so we don't re-trigger every msg
         _rank_cooldown_until[key] = now + cd_v
@@ -1073,24 +1069,17 @@ def track_group_message(bot, message):
     try:
         chat = message.chat
         user = message.from_user
-        logger.info(f"track_group_message called: chat {getattr(chat, 'id', '?')} user {getattr(user, 'id', '?')} type {getattr(chat, 'type', '?')} is_bot={getattr(user, 'is_bot', False)}")
         if chat is None or user is None:
-            logger.info("track_group_message: chat or user is None, return")
             return
         if chat.type not in ("group", "supergroup"):
-            logger.info(f"track_group_message: wrong chat type {chat.type}, return")
             return
         if getattr(user, "is_bot", False):
-            logger.info("track_group_message: is_bot, return")
             return
         if not chat_activity_enabled():
-            logger.info("track_group_message: chat_activity disabled, return")
             return
 
         group = db.get_group(chat.id)
-        logger.info(f"track_group_message: group {chat.id} chat_tracking={group.get('chat_tracking', 1) if group else 'no group'}")
         if not group or not group.get("chat_tracking", 1):
-            logger.info("track_group_message: chat_tracking off, return")
             return
 
         # ── Ranking anti-spam: flood -> 10 min no-count (text/sticker/gif all covered) ──
