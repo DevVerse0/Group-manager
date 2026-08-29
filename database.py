@@ -1429,8 +1429,33 @@ class Database:
                     FROM groups g ORDER BY g.last_active DESC
                 """)
                 return {row['chat_id']: dict(row) for row in c.fetchall()}
-            except:
-                return {}
+            except Exception as e:
+                # Fallback for DBs not yet migrated (old columns missing)
+                try:
+                    c = self.conn.cursor()
+                    c.execute("""
+                        SELECT g.chat_id, g.name, g.message_count, g.member_count,
+                               g.last_active, g.antispam, g.welcome_message, g.welcome_type, g.welcome_file_id,
+                               g.leave_message, g.leave_type, g.leave_file_id, g.strict_mode, g.max_warnings,
+                               (SELECT COUNT(*) FROM filters WHERE chat_id = g.chat_id) as filter_count,
+                               (SELECT COUNT(*) FROM bad_words WHERE chat_id = g.chat_id) as bad_words_count
+                        FROM groups g ORDER BY g.last_active DESC
+                    """)
+                    result = {}
+                    for row in c.fetchall():
+                        d = dict(row)
+                        d.setdefault("antispam_auto_delete_links", 1)
+                        d.setdefault("keyword_alert", 0)
+                        d.setdefault("keyword_alert_words", "@admin,admin,help,support")
+                        result[d["chat_id"]] = d
+                    # Trigger migration for next request
+                    try:
+                        self._migrate()
+                    except:
+                        pass
+                    return result
+                except:
+                    return {}
 
     def search_items(self, query):
         if not self._check_conn():
