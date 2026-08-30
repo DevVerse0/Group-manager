@@ -825,30 +825,33 @@ def register_handlers(bot):
         main_group_link = config.get("main_group_link", "").strip()
         bot_username    = bot.get_me().username
 
-        # ── Buttons like the reference image ──
         markup = InlineKeyboardMarkup()
-        # Row 1: ADD ME BABY (full width)
-        markup.row(InlineKeyboardButton("• ADD ME BABY •", url=f"https://t.me/{bot_username}?startgroup=true"))
-        # Row 2: UPDATE | SUPPORT
-        row2 = []
-        # UPDATE -> main group link if set, else support channel
+
+        # ── Row 1: Join Main Group (if set) ──
         if main_group_link:
-            row2.append(InlineKeyboardButton("• UPDATE •", url=main_group_link))
-        elif support_channel:
-            row2.append(InlineKeyboardButton("• UPDATE •", url=f"https://t.me/{support_channel}"))
-        else:
-            row2.append(InlineKeyboardButton("• UPDATE •", url=f"https://t.me/{owner}"))
+            markup.row(
+                InlineKeyboardButton(
+                    "🚀 Join Our Main Group",
+                    url=main_group_link
+                )
+            )
+
+        # ── Row 2: Add Me to Your Group ──
+        markup.row(
+            InlineKeyboardButton(
+                "➕ Add Me to Your Group",
+                url=f"https://t.me/{bot_username}?startgroup=true"
+            )
+        )
+
+        # ── Row 3: Commands & Help + Support Channel ──
+        row3 = [InlineKeyboardButton("📜 Commands & Help", callback_data="show_help")]
         if support_channel:
-            row2.append(InlineKeyboardButton("• SUPPORT •", url=f"https://t.me/{support_channel}"))
-        else:
-            row2.append(InlineKeyboardButton("• SUPPORT •", url=f"https://t.me/{owner}"))
-        markup.row(*row2)
-        # Row 3: HELP AND COMMANDS (full width)
-        markup.row(InlineKeyboardButton("• HELP AND COMMANDS •", callback_data="show_help"))
-        # Optional: keep Join Main Group as extra if set (above ADD ME BABY)
-        if main_group_link:
-            # Insert at top as first row
-            markup.keyboard.insert(0, [InlineKeyboardButton("🚀 Join Main Group", url=main_group_link)])
+            row3.append(InlineKeyboardButton("📢 Support Channel", url=f"https://t.me/{support_channel}"))
+        markup.row(*row3)
+
+        # ── Row 4: Contact Owner ──
+        markup.row(InlineKeyboardButton("👤 Contact Owner", url=f"https://t.me/{owner}"))
 
         first = html.escape(str(message.from_user.first_name or "there"))
         line = "─" * 33
