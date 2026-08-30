@@ -1954,8 +1954,8 @@ def register_handlers(bot):
         mk = InlineKeyboardMarkup()
         def btn(label, key):
             is_on = bool(group.get(key, 0))
-            # Clear ON/OFF with color emoji and text
-            text = f"{label}: {'🔒 ON' if is_on else '🔓 OFF'}"
+            # Green = ON (Locked), Red = OFF (Unlocked) — clear at a glance
+            text = f"{label}: {'🟢 ON' if is_on else '🔴 OFF'}"
             return InlineKeyboardButton(text, callback_data=f"lock:{key.replace('lock_','')}:{chat_id}")
         # Row 1
         mk.row(btn("Stickers", "lock_sticker"), btn("GIFs", "lock_animation"), btn("Media", "lock_media"))
