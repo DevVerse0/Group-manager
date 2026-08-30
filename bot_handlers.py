@@ -1952,21 +1952,15 @@ def register_handlers(bot):
 
     def build_locks_markup(chat_id, group):
         mk = InlineKeyboardMarkup()
-        # Row 1: sticker, gif, media
-        mk.row(
-            InlineKeyboardButton(f"{'🔒' if group.get('lock_sticker') else '🔓'} Stickers", callback_data=f"lock:sticker:{chat_id}"),
-            InlineKeyboardButton(f"{'🔒' if group.get('lock_animation') else '🔓'} GIFs", callback_data=f"lock:animation:{chat_id}"),
-            InlineKeyboardButton(f"{'🔒' if group.get('lock_media') else '🔓'} Media", callback_data=f"lock:media:{chat_id}"),
-        )
-        mk.row(
-            InlineKeyboardButton(f"{'🔒' if group.get('lock_url') else '🔓'} Links", callback_data=f"lock:url:{chat_id}"),
-            InlineKeyboardButton(f"{'🔒' if group.get('lock_forward') else '🔓'} Forwards", callback_data=f"lock:forward:{chat_id}"),
-            InlineKeyboardButton(f"{'🔒' if group.get('lock_inline') else '🔓'} Inline", callback_data=f"lock:inline:{chat_id}"),
-        )
-        mk.row(
-            InlineKeyboardButton(f"{'🔒' if group.get('lock_poll') else '🔓'} Polls", callback_data=f"lock:poll:{chat_id}"),
-            InlineKeyboardButton(f"{'🔒' if group.get('lock_game') else '🔓'} Games", callback_data=f"lock:game:{chat_id}"),
-        )
+        def btn(label, key):
+            is_on = bool(group.get(key, 0))
+            # Clear ON/OFF with color emoji and text
+            text = f"{label}: {'🔒 ON' if is_on else '🔓 OFF'}"
+            return InlineKeyboardButton(text, callback_data=f"lock:{key.replace('lock_','')}:{chat_id}")
+        # Row 1
+        mk.row(btn("Stickers", "lock_sticker"), btn("GIFs", "lock_animation"), btn("Media", "lock_media"))
+        mk.row(btn("Links", "lock_url"), btn("Forwards", "lock_forward"), btn("Inline", "lock_inline"))
+        mk.row(btn("Polls", "lock_poll"), btn("Games", "lock_game"))
         mk.row(
             InlineKeyboardButton("🔒 Lock All", callback_data=f"lock:all:{chat_id}"),
             InlineKeyboardButton("🔓 Unlock All", callback_data=f"lock:unlockall:{chat_id}"),

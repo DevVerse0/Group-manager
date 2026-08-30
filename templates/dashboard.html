@@ -1025,31 +1025,32 @@ input:checked+.mini-slider:before{transform:translateX(18px);}
     </div>
     <input type="hidden" id="locksChatId">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;" onclick="toggleLock('lock_sticker')">
-        <span>🃏 Stickers</span><input type="checkbox" id="lock_sticker" style="width:auto;">
+      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;transition:0.2s;" onclick="toggleLock('lock_sticker')" id="label_lock_sticker">
+        <span>🃏 Stickers</span><span style="display:flex;align-items:center;gap:8px;"><span id="status_lock_sticker" style="font-size:0.75rem;font-weight:700;padding:3px 8px;border-radius:100px;background:rgba(100,116,139,0.2);color:#64748b;">OFF</span><input type="checkbox" id="lock_sticker" style="width:auto;"></span>
       </label>
-      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;" onclick="toggleLock('lock_animation')">
-        <span>🎞️ GIFs</span><input type="checkbox" id="lock_animation" style="width:auto;">
+      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;transition:0.2s;" onclick="toggleLock('lock_animation')" id="label_lock_animation">
+        <span>🎞️ GIFs</span><span style="display:flex;align-items:center;gap:8px;"><span id="status_lock_animation" style="font-size:0.75rem;font-weight:700;padding:3px 8px;border-radius:100px;background:rgba(100,116,139,0.2);color:#64748b;">OFF</span><input type="checkbox" id="lock_animation" style="width:auto;"></span>
       </label>
-      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;" onclick="toggleLock('lock_media')">
-        <span>🖼️ Media</span><input type="checkbox" id="lock_media" style="width:auto;">
+      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;transition:0.2s;" onclick="toggleLock('lock_media')" id="label_lock_media">
+        <span>🖼️ Media</span><span style="display:flex;align-items:center;gap:8px;"><span id="status_lock_media" style="font-size:0.75rem;font-weight:700;padding:3px 8px;border-radius:100px;background:rgba(100,116,139,0.2);color:#64748b;">OFF</span><input type="checkbox" id="lock_media" style="width:auto;"></span>
       </label>
-      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;" onclick="toggleLock('lock_url')">
-        <span>🔗 Links</span><input type="checkbox" id="lock_url" style="width:auto;">
+      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;transition:0.2s;" onclick="toggleLock('lock_url')" id="label_lock_url">
+        <span>🔗 Links</span><span style="display:flex;align-items:center;gap:8px;"><span id="status_lock_url" style="font-size:0.75rem;font-weight:700;padding:3px 8px;border-radius:100px;background:rgba(100,116,139,0.2);color:#64748b;">OFF</span><input type="checkbox" id="lock_url" style="width:auto;"></span>
       </label>
-      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;" onclick="toggleLock('lock_forward')">
-        <span>↗️ Forwards</span><input type="checkbox" id="lock_forward" style="width:auto;">
+      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;transition:0.2s;" onclick="toggleLock('lock_forward')" id="label_lock_forward">
+        <span>↗️ Forwards</span><span style="display:flex;align-items:center;gap:8px;"><span id="status_lock_forward" style="font-size:0.75rem;font-weight:700;padding:3px 8px;border-radius:100px;background:rgba(100,116,139,0.2);color:#64748b;">OFF</span><input type="checkbox" id="lock_forward" style="width:auto;"></span>
       </label>
-      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;" onclick="toggleLock('lock_inline')">
-        <span>🤖 Inline</span><input type="checkbox" id="lock_inline" style="width:auto;">
+      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;transition:0.2s;" onclick="toggleLock('lock_inline')" id="label_lock_inline">
+        <span>🤖 Inline</span><span style="display:flex;align-items:center;gap:8px;"><span id="status_lock_inline" style="font-size:0.75rem;font-weight:700;padding:3px 8px;border-radius:100px;background:rgba(100,116,139,0.2);color:#64748b;">OFF</span><input type="checkbox" id="lock_inline" style="width:auto;"></span>
       </label>
-      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;" onclick="toggleLock('lock_poll')">
-        <span>📊 Polls</span><input type="checkbox" id="lock_poll" style="width:auto;">
+      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;transition:0.2s;" onclick="toggleLock('lock_poll')" id="label_lock_poll">
+        <span>📊 Polls</span><span style="display:flex;align-items:center;gap:8px;"><span id="status_lock_poll" style="font-size:0.75rem;font-weight:700;padding:3px 8px;border-radius:100px;background:rgba(100,116,139,0.2);color:#64748b;">OFF</span><input type="checkbox" id="lock_poll" style="width:auto;"></span>
       </label>
-      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;" onclick="toggleLock('lock_game')">
-        <span>🎮 Games</span><input type="checkbox" id="lock_game" style="width:auto;">
+      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;transition:0.2s;" onclick="toggleLock('lock_game')" id="label_lock_game">
+        <span>🎮 Games</span><span style="display:flex;align-items:center;gap:8px;"><span id="status_lock_game" style="font-size:0.75rem;font-weight:700;padding:3px 8px;border-radius:100px;background:rgba(100,116,139,0.2);color:#64748b;">OFF</span><input type="checkbox" id="lock_game" style="width:auto;"></span>
       </label>
     </div>
+    <p style="font-size:0.75rem;color:var(--text-muted);margin-top:12px;text-align:center;">🔒 = Locked (blocked) &nbsp;|&nbsp; 🔓 = Unlocked (allowed) — green = ON, gray = OFF</p>
     <div class="divider"></div>
     <div style="display:flex;gap:10px;justify-content:flex-end;">
       <button class="btn btn-ghost" onclick="closeLocksManage()">Close</button>
@@ -1320,7 +1321,19 @@ async function openLocksManage(chatId){
     if(d.ok){
       for(const k of ["lock_sticker","lock_animation","lock_media","lock_url","lock_forward","lock_inline","lock_poll","lock_game"]){
         const el = document.getElementById(k);
-        if(el) el.checked = !!d.locks[k];
+        const statusEl = document.getElementById('status_'+k);
+        const labelEl = document.getElementById('label_'+k);
+        const isOn = !!d.locks[k];
+        if(el) el.checked = isOn;
+        if(statusEl){
+          statusEl.textContent = isOn ? '🔒 ON' : '🔓 OFF';
+          statusEl.style.background = isOn ? 'rgba(244,63,94,0.15)' : 'rgba(100,116,139,0.2)';
+          statusEl.style.color = isOn ? '#fb7185' : '#64748b';
+        }
+        if(labelEl){
+          labelEl.style.borderColor = isOn ? 'rgba(244,63,94,0.3)' : 'rgba(255,255,255,0.07)';
+          labelEl.style.background = isOn ? 'rgba(244,63,94,0.08)' : 'rgba(255,255,255,0.04)';
+        }
       }
     }
   }catch(e){}
@@ -1334,8 +1347,19 @@ async function toggleLock(lockType){
     const d=await (await fetch('/api/lock/toggle',{method:'POST',body:fd})).json();
     if(d.ok){
       const el=document.getElementById(lockType);
+      const statusEl=document.getElementById('status_'+lockType);
+      const labelEl=document.getElementById('label_'+lockType);
       if(el) el.checked=d.value;
-      showToast(`${lockType} ${d.value?'Locked 🔒':'Unlocked 🔓'}`,'success');
+      if(statusEl){
+        statusEl.textContent = d.value ? '🔒 ON' : '🔓 OFF';
+        statusEl.style.background = d.value ? 'rgba(244,63,94,0.15)' : 'rgba(100,116,139,0.2)';
+        statusEl.style.color = d.value ? '#fb7185' : '#64748b';
+      }
+      if(labelEl){
+        labelEl.style.borderColor = d.value ? 'rgba(244,63,94,0.3)' : 'rgba(255,255,255,0.07)';
+        labelEl.style.background = d.value ? 'rgba(244,63,94,0.08)' : 'rgba(255,255,255,0.04)';
+      }
+      showToast(`${lockType.replace('lock_','')} ${d.value?'Locked 🔒':'Unlocked 🔓'}`,'success');
     } else showToast('❌ '+d.error,'error');
   }catch(e){showToast('❌ Request failed','error');}
 }
