@@ -1097,7 +1097,26 @@ class Database:
                                 "keyword_alert", "keyword_alert_words",
                                 "lock_sticker", "lock_animation", "lock_media", "lock_url", "lock_forward", "lock_inline", "lock_poll", "lock_game"}
                     if key in valid_keys:
-                        c.execute(f"UPDATE groups SET {key}=? WHERE chat_id=?", (value, str_id))
+                        try:
+                            c.execute(f"UPDATE groups SET {key}=? WHERE chat_id=?", (value, str_id))
+                        except Exception as upd_e:
+                            msg = str(upd_e).lower()
+                            if "no such column" in msg or "does not exist" in msg or "column" in msg:
+                                # Auto-migrate missing column then retry once
+                                try:
+                                    # Try PG syntax first, fallback to SQLite
+                                    try:
+                                        c.execute(f"ALTER TABLE groups ADD COLUMN IF NOT EXISTS {key} INTEGER DEFAULT 0")
+                                    except:
+                                        c.execute(f"ALTER TABLE groups ADD COLUMN {key} INTEGER DEFAULT 0")
+                                    self.conn.commit()
+                                    c.execute(f"UPDATE groups SET {key}=? WHERE chat_id=?", (value, str_id))
+                                    print(f"Auto-migrated column {key} and updated")
+                                except Exception as e2:
+                                    print(f"Auto-migrate failed for {key}: {e2} / original: {upd_e}")
+                                    raise
+                            else:
+                                raise
                 self.conn.commit()
                 _group_cache.invalidate(f"group:{str_id}")
             except Exception as e:
