@@ -376,7 +376,31 @@ class Database:
                 # ── KEYWORD ALERT SYSTEM ──
                 for col in [
                     "keyword_alert INTEGER DEFAULT 0",
-                    "keyword_alert_words TEXT DEFAULT '@admin,admin,help,support'"
+                    "keyword_alert_words TEXT DEFAULT '@admin,admin,help,support'",
+                "lock_sticker INTEGER DEFAULT 0",
+                "lock_animation INTEGER DEFAULT 0",
+                "lock_media INTEGER DEFAULT 0",
+                "lock_url INTEGER DEFAULT 0",
+                "lock_forward INTEGER DEFAULT 0",
+                "lock_inline INTEGER DEFAULT 0",
+                "lock_poll INTEGER DEFAULT 0",
+                "lock_game INTEGER DEFAULT 0"
+                ]:
+                    try:
+                        c.execute(f"ALTER TABLE groups ADD COLUMN {col}")
+                    except sqlite3.OperationalError:
+                        pass # Column already exists
+
+                # ── GRANULAR LOCKS (Rose-style) ──
+                for col in [
+                    "lock_sticker INTEGER DEFAULT 0",
+                    "lock_animation INTEGER DEFAULT 0",
+                    "lock_media INTEGER DEFAULT 0",
+                    "lock_url INTEGER DEFAULT 0",
+                    "lock_forward INTEGER DEFAULT 0",
+                    "lock_inline INTEGER DEFAULT 0",
+                    "lock_poll INTEGER DEFAULT 0",
+                    "lock_game INTEGER DEFAULT 0"
                 ]:
                     try:
                         c.execute(f"ALTER TABLE groups ADD COLUMN {col}")
@@ -1070,7 +1094,8 @@ class Database:
                                 "log_channel_id", "captcha", "captcha_mode", "captcha_rules", "captcha_mute_time",
                                 "captcha_kick", "captcha_kick_time", "captcha_text",
                                 "chat_tracking", "user_milestones", "group_milestones", "leaderboard",
-                                "keyword_alert", "keyword_alert_words"}
+                                "keyword_alert", "keyword_alert_words",
+                                "lock_sticker", "lock_animation", "lock_media", "lock_url", "lock_forward", "lock_inline", "lock_poll", "lock_game"}
                     if key in valid_keys:
                         c.execute(f"UPDATE groups SET {key}=? WHERE chat_id=?", (value, str_id))
                 self.conn.commit()
@@ -1422,6 +1447,8 @@ class Database:
                     SELECT g.chat_id, g.name, g.message_count, g.member_count,
                            g.last_active, g.antispam, g.antispam_auto_delete_links,
                            g.keyword_alert, g.keyword_alert_words,
+                           g.lock_sticker, g.lock_animation, g.lock_media, g.lock_url,
+                           g.lock_forward, g.lock_inline, g.lock_poll, g.lock_game,
                            g.welcome_message, g.welcome_type, g.welcome_file_id,
                            g.leave_message, g.leave_type, g.leave_file_id, g.strict_mode, g.max_warnings,
                            (SELECT COUNT(*) FROM filters WHERE chat_id = g.chat_id) as filter_count,
@@ -1447,6 +1474,14 @@ class Database:
                         d.setdefault("antispam_auto_delete_links", 1)
                         d.setdefault("keyword_alert", 0)
                         d.setdefault("keyword_alert_words", "@admin,admin,help,support")
+                        d.setdefault("lock_sticker", 0)
+                        d.setdefault("lock_animation", 0)
+                        d.setdefault("lock_media", 0)
+                        d.setdefault("lock_url", 0)
+                        d.setdefault("lock_forward", 0)
+                        d.setdefault("lock_inline", 0)
+                        d.setdefault("lock_poll", 0)
+                        d.setdefault("lock_game", 0)
                         result[d["chat_id"]] = d
                     # Trigger migration for next request
                     try:

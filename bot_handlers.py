@@ -899,7 +899,10 @@ def register_handlers(bot):
                 "1m (minute), 1h (hour), 1d (day), 1w (week), 1mn (month), 1y (year)\n\n"
                 "<b>👮 Admin Tools:</b>\n"
                 "• /lock - Lock group (Admins only)\n"
+                "• /lock <type> - Lock specific: sticker|gif|media|url|forward|inline|poll|game|all\n"
                 "• /unlock - Unlock group\n"
+                "• /unlock <type> - Unlock specific type\n"
+                "• /locks - Show locks status\n"
                 "• /promote - Give admin rights\n"
                 "• /demote - Remove admin rights\n"
                 "• /settitle - Change group name\n"
@@ -1927,6 +1930,601 @@ def register_handlers(bot):
         text = "<b>🔍 Active Group Filters:</b>\n\n" + "\n".join([f"• <code>{f}</code>" for f in fts])
         bot.reply_to(message, text, parse_mode="HTML")
 
+    # ── /lock — Granular (Rose-style) ──
+    LOCK_TYPES = {
+        "sticker": ("lock_sticker", "Stickers"),
+        "animation": ("lock_animation", "GIFs"),
+        "gif": ("lock_animation", "GIFs"),
+        "media": ("lock_media", "Media (photo/video/doc)"),
+        "photo": ("lock_media", "Media"),
+        "video": ("lock_media", "Media"),
+        "document": ("lock_media", "Media"),
+        "url": ("lock_url", "Links"),
+        "link": ("lock_url", "Links"),
+        "links": ("lock_url", "Links"),
+        "forward": ("lock_forward", "Forwards"),
+        "forwards": ("lock_forward", "Forwards"),
+        "inline": ("lock_inline", "Inline Bots"),
+        "poll": ("lock_poll", "Polls"),
+        "game": ("lock_game", "Games"),
+        "all": (None, "All"),
+    }
+
+    def build_locks_markup(chat_id, group):
+        mk = InlineKeyboardMarkup()
+        # Row 1: sticker, gif, media
+        mk.row(
+            InlineKeyboardButton(f"{'🔒' if group.get('lock_sticker') else '🔓'} Stickers", callback_data=f"lock:sticker:{chat_id}"),
+            InlineKeyboardButton(f"{'🔒' if group.get('lock_animation') else '🔓'} GIFs", callback_data=f"lock:animation:{chat_id}"),
+            InlineKeyboardButton(f"{'🔒' if group.get('lock_media') else '🔓'} Media", callback_data=f"lock:media:{chat_id}"),
+        )
+        mk.row(
+            InlineKeyboardButton(f"{'🔒' if group.get('lock_url') else '🔓'} Links", callback_data=f"lock:url:{chat_id}"),
+            InlineKeyboardButton(f"{'🔒' if group.get('lock_forward') else '🔓'} Forwards", callback_data=f"lock:forward:{chat_id}"),
+            InlineKeyboardButton(f"{'🔒' if group.get('lock_inline') else '🔓'} Inline", callback_data=f"lock:inline:{chat_id}"),
+        )
+        mk.row(
+            InlineKeyboardButton(f"{'🔒' if group.get('lock_poll') else '🔓'} Polls", callback_data=f"lock:poll:{chat_id}"),
+            InlineKeyboardButton(f"{'🔒' if group.get('lock_game') else '🔓'} Games", callback_data=f"lock:game:{chat_id}"),
+        )
+        mk.row(
+            InlineKeyboardButton("🔒 Lock All", callback_data=f"lock:all:{chat_id}"),
+            InlineKeyboardButton("🔓 Unlock All", callback_data=f"lock:unlockall:{chat_id}"),
+        )
+        return mk
+
+    def _set_lock(chat_id, lock_key, value):
+        db.update_group_setting(chat_id, lock_key, 1 if value else 0)
+        db.log_event(f"🔒 Lock {lock_key} set to {'ON' if value else 'OFF'} for {chat_id}")
+
+    @bot.message_handler(commands=['lock'])
+    def cmd_lock(message):
+        if message.chat.type not in ['group', 'supergroup']:
+            return
+        if not is_admin(bot, message.chat.id, message.from_user.id) and not is_owner(message.from_user.username): return reply_not_admin(bot, message)
+        args = message.text.split()
+        if len(args) == 1:
+            # No args: show panel or do general lock (old behavior) — show panel
+            group = db.get_group(message.chat.id)
+            markup = build_locks_markup(message.chat.id, group)
+            text = "🔒 <b>Locks Panel</b>\n\nTap a button to toggle. General lock (mute all) is separate: use <code>/lock all</code> to lock entire group."
+            return bot.reply_to(message, text, reply_markup=markup, parse_mode="HTML")
+        typ = args[1].lower()
+        if typ not in LOCK_TYPES:
+            return bot.reply_to(message, f"Unknown lock type <b>{html.escape(typ)}</b>.\nUse: <code>/lock sticker|gif|media|url|forward|inline|poll|game|all</code>\nOr just <code>/lock</code> for panel.", parse_mode="HTML")
+        lock_key, label = LOCK_TYPES[typ]
+        if typ == "all":
+            # General lock: mute all via permissions + set all granular locks ON
+            try:
+                bot.set_chat_permissions(message.chat.id, telebot.types.ChatPermissions(can_send_messages=False))
+            except Exception as e:
+                return bot.reply_to(message, f"Failed to lock: {e}")
+            for k in ["lock_sticker","lock_animation","lock_media","lock_url","lock_forward","lock_inline","lock_poll","lock_game"]:
+                _set_lock(message.chat.id, k, True)
+            return bot.reply_to(message, "🔒 <b>Group locked</b> — all messages and all types restricted.", parse_mode="HTML")
+        # Granular lock
+        _set_lock(message.chat.id, lock_key, True)
+        bot.reply_to(message, f"🔒 <b>{label} locked</b> in this group.", parse_mode="HTML")
+
+    @bot.message_handler(commands=['unlock'])
+    def cmd_unlock(message):
+        if message.chat.type not in ['group', 'supergroup']:
+            return
+        if not is_admin(bot, message.chat.id, message.from_user.id) and not is_owner(message.from_user.username): return reply_not_admin(bot, message)
+        args = message.text.split()
+        if len(args) == 1:
+            # No args: general unlock
+            try:
+                bot.set_chat_permissions(message.chat.id, telebot.types.ChatPermissions(
+                    can_send_messages=True, can_send_media_messages=True,
+                    can_send_other_messages=True, can_add_web_page_previews=True
+                ))
+            except Exception as e:
+                return bot.reply_to(message, f"Failed to unlock: {e}")
+            # Also unlock all granular
+            for k in ["lock_sticker","lock_animation","lock_media","lock_url","lock_forward","lock_inline","lock_poll","lock_game"]:
+                _set_lock(message.chat.id, k, False)
+            return bot.reply_to(message, "🔓 <b>Group unlocked</b> — all restrictions lifted.", parse_mode="HTML")
+        typ = args[1].lower()
+        if typ not in LOCK_TYPES:
+            return bot.reply_to(message, f"Unknown unlock type <b>{html.escape(typ)}</b>.", parse_mode="HTML")
+        if typ == "all":
+            try:
+                bot.set_chat_permissions(message.chat.id, telebot.types.ChatPermissions(
+                    can_send_messages=True, can_send_media_messages=True,
+                    can_send_other_messages=True, can_add_web_page_previews=True
+                ))
+            except Exception as e:
+                return bot.reply_to(message, f"Failed to unlock: {e}")
+            for k in ["lock_sticker","lock_animation","lock_media","lock_url","lock_forward","lock_inline","lock_poll","lock_game"]:
+                _set_lock(message.chat.id, k, False)
+            return bot.reply_to(message, "🔓 <b>Group unlocked</b> — all restrictions lifted.", parse_mode="HTML")
+        lock_key, label = LOCK_TYPES[typ]
+        _set_lock(message.chat.id, lock_key, False)
+        bot.reply_to(message, f"🔓 <b>{label} unlocked</b> in this group.", parse_mode="HTML")
+
+    @bot.message_handler(commands=['locks'])
+    def cmd_locks(message):
+        if message.chat.type not in ['group', 'supergroup']:
+            return
+        group = db.get_group(message.chat.id)
+        markup = build_locks_markup(message.chat.id, group)
+        text = "🔒 <b>Locks Status</b>\n\n" + "\n".join([f"{'🔒' if group.get(k) else '🔓'} {label}" for k, label in [v for v in LOCK_TYPES.values() if v[0]]]) + "\n\nTap to toggle."
+        # Deduplicate labels
+        seen = set()
+        lines = []
+        for k, label in LOCK_TYPES.values():
+            if k and k not in seen:
+                seen.add(k)
+                lines.append(f"{'🔒' if group.get(k) else '🔓'} {label}: {'ON' if group.get(k) else 'OFF'}")
+        text = "🔒 <b>Locks Status</b>\n\n" + "\n".join(lines) + "\n\nTap a button to toggle."
+        bot.reply_to(message, text, reply_markup=markup, parse_mode="HTML")
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("lock:"))
+    def locks_callback(call):
+        try:
+            _, typ, chat_id = call.data.split(":", 2)
+            chat_id = int(chat_id)
+        except:
+            return bot.answer_callback_query(call.id, "Invalid data")
+        if int(call.message.chat.id) != int(chat_id):
+            return bot.answer_callback_query(call.id, "Not allowed for this group")
+        if not is_admin(bot, chat_id, call.from_user.id) and not is_owner(call.from_user.username):
+            return reply_not_admin(bot, call)
+        group = db.get_group(chat_id)
+        if typ == "all":
+            for k in ["lock_sticker","lock_animation","lock_media","lock_url","lock_forward","lock_inline","lock_poll","lock_game"]:
+                _set_lock(chat_id, k, True)
+            try:
+                bot.set_chat_permissions(chat_id, telebot.types.ChatPermissions(can_send_messages=False))
+            except:
+                pass
+            bot.answer_callback_query(call.id, "All locked")
+        elif typ == "unlockall":
+            for k in ["lock_sticker","lock_animation","lock_media","lock_url","lock_forward","lock_inline","lock_poll","lock_game"]:
+                _set_lock(chat_id, k, False)
+            try:
+                bot.set_chat_permissions(chat_id, telebot.types.ChatPermissions(can_send_messages=True, can_send_media_messages=True, can_send_other_messages=True, can_add_web_page_previews=True))
+            except:
+                pass
+            bot.answer_callback_query(call.id, "All unlocked")
+        else:
+            # Toggle single
+            lock_key, label = LOCK_TYPES.get(typ, (None, typ))
+            if not lock_key:
+                return bot.answer_callback_query(call.id, "Unknown type")
+            current = bool(group.get(lock_key, 0))
+            _set_lock(chat_id, lock_key, not current)
+            bot.answer_callback_query(call.id, f"{label} {'locked' if not current else 'unlocked'}")
+        # Refresh markup
+        group = db.get_group(chat_id)
+        markup = build_locks_markup(chat_id, group)
+        seen = set()
+        lines = []
+        for k, label in LOCK_TYPES.values():
+            if k and k not in seen:
+                seen.add(k)
+                lines.append(f"{'🔒' if group.get(k) else '🔓'} {label}: {'ON' if group.get(k) else 'OFF'}")
+        text = "🔒 <b>Locks Status</b>\n\n" + "\n".join(lines) + "\n\nTap a button to toggle."
+        try:
+            bot.edit_message_text(text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode="HTML")
+        except:
+            pass
+
+    # ── /promote ──
+    # ── /promote ──
+    @bot.message_handler(commands=['promote'])
+    def cmd_promote(message):
+        if message.chat.type not in ['group', 'supergroup']:
+            return
+        if not is_admin(bot, message.chat.id, message.from_user.id) and not is_owner(message.from_user.username): return reply_not_admin(bot, message)
+        target = get_target_user(message)
+        if not target:
+            return bot.reply_to(message, "❌ Reply to a user or provide their ID/@username.")
+        t_id = target.id
+        t_uname = getattr(target, 'username', None)
+        if not can_act_on(bot, message.chat.id, message.from_user.id, message.from_user.username, t_id, t_uname):
+            return bot.reply_to(message, "⚠️ Cannot promote this user (already an admin or owner protected).")
+        try:
+            bot.promote_chat_member(message.chat.id, t_id,
+                can_change_info=True, can_post_messages=True, can_edit_messages=True,
+                can_delete_messages=True, can_invite_users=True, can_restrict_members=True,
+                can_pin_messages=True, can_promote_members=False)
+            name = getattr(target, 'first_name', str(t_id))
+            bot.reply_to(message, f"⏫ User <b>{name}</b> (<code>{t_id}</code>) promoted to <b>Admin</b>!", parse_mode="HTML")
+        except Exception as e:
+            if "RIGHT_FORBIDDEN" in str(e):
+                bot.reply_to(message, "❌ <b>RIGHT_FORBIDDEN</b>\n\nThe bot needs the <b>\"Add new admins\"</b> permission to promote users.\n\n"
+                    "👤 Go to Group Settings → Administrators → select the bot → enable <b>\"Add new admins\"</b>.",
+                    parse_mode="HTML")
+            else:
+                bot.reply_to(message, f"Failed to promote: {e}")
+
+    # ── /demote ──
+    @bot.message_handler(commands=['demote'])
+    def cmd_demote(message):
+        if message.chat.type not in ['group', 'supergroup']:
+            return
+        if not is_admin(bot, message.chat.id, message.from_user.id) and not is_owner(message.from_user.username): return reply_not_admin(bot, message)
+        target = get_target_user(message)
+        if not target:
+            return bot.reply_to(message, "❌ Reply to a user or provide their ID/@username.")
+        t_id = target.id
+        if not can_act_on(bot, message.chat.id, message.from_user.id, message.from_user.username, t_id, getattr(target, 'username', None)):
+            return bot.reply_to(message, "⚠️ Cannot demote this user.")
+        try:
+            bot.promote_chat_member(message.chat.id, t_id,
+                can_change_info=False, can_post_messages=False, can_edit_messages=False,
+                can_delete_messages=False, can_invite_users=False, can_restrict_members=False,
+                can_pin_messages=False, can_promote_members=False)
+            name = getattr(target, 'first_name', str(t_id))
+            bot.reply_to(message, f"⏬ User <b>{name}</b> (<code>{t_id}</code>) has been <b>demoted</b>.", parse_mode="HTML")
+        except Exception as e:
+            bot.reply_to(message, f"Failed to demote: {e}")
+
+    # ── /pin ──
+    @bot.message_handler(commands=['pin'])
+    def cmd_pin(message):
+        if message.chat.type not in ['group', 'supergroup']:
+            return
+        if not is_admin(bot, message.chat.id, message.from_user.id) and not is_owner(message.from_user.username): return reply_not_admin(bot, message)
+        if not message.reply_to_message:
+            return bot.reply_to(message, "Reply to a message to pin it.")
+        try:
+            bot.pin_chat_message(message.chat.id, message.reply_to_message.message_id)
+            bot.reply_to(message, "📌 Message pinned!")
+        except Exception as e:
+            bot.reply_to(message, str(e))
+
+    # ── /unpin ──
+    @bot.message_handler(commands=['unpin'])
+    def cmd_unpin(message):
+        if message.chat.type not in ['group', 'supergroup']:
+            return
+        if not is_admin(bot, message.chat.id, message.from_user.id) and not is_owner(message.from_user.username): return reply_not_admin(bot, message)
+        try:
+            bot.unpin_all_chat_messages(message.chat.id)
+            bot.reply_to(message, "📌 All messages unpinned!")
+        except Exception as e:
+            bot.reply_to(message, str(e))
+
+    # ── /report ──
+    @bot.message_handler(commands=['report'])
+    def cmd_report(message):
+        if message.chat.type not in ['group', 'supergroup']:
+            return
+        if not message.reply_to_message:
+            return bot.reply_to(message, "Reply to a message to report it to admins.")
+        try:
+            admins = bot.get_chat_administrators(message.chat.id)
+            chat_link_id = abs(message.chat.id) % (10 ** 10)
+            for admin in admins:
+                if not admin.user.is_bot:
+                    try:
+                        bot.send_message(
+                            admin.user.id,
+                            f"🚨 <b>Report from {message.chat.title}</b>\n\n"
+                            f"Reported by: {message.from_user.first_name}\n"
+                            f"Message: <a href='https://t.me/c/{chat_link_id}/{message.reply_to_message.message_id}'>View Message</a>",
+                            parse_mode="HTML"
+                        )
+                    except Exception:
+                        pass
+            bot.reply_to(message, "🚨 Admins have been notified.")
+        except Exception:
+            pass
+
+    # ── /setwelcome — UPGRADED (reply-to-set: text / photo+caption / GIF+caption) ──
+    @bot.message_handler(commands=['setwelcome'])
+    def cmd_setwelcome(message):
+        if message.chat.type not in ['group', 'supergroup']:
+            return
+        if not is_admin(bot, message.chat.id, message.from_user.id) and not is_owner(message.from_user.username): return reply_not_admin(bot, message)
+
+        # ── Reply-based method ──
+        if message.reply_to_message:
+            m = message.reply_to_message
+            if m.photo:
+                file_id = m.photo[-1].file_id
+                caption = m.caption or "Welcome, {name}! 👋"
+                db.update_group_setting(message.chat.id, "welcome_type", "photo")
+                db.update_group_setting(message.chat.id, "welcome_file_id", file_id)
+                db.update_group_setting(message.chat.id, "welcome_message", caption)
+                bot.reply_to(message,
+                    "✅ <b>Welcome image set!</b>\n\n"
+                    "New members will be greeted with your photo + caption.\n"
+                    "<i>Use {name} or {id} for personalization.</i>",
+                    parse_mode="HTML")
+                return
+
+            elif m.animation:
+                file_id = m.animation.file_id
+                caption = m.caption or "Welcome, {name}! 👋"
+                db.update_group_setting(message.chat.id, "welcome_type", "gif")
+                db.update_group_setting(message.chat.id, "welcome_file_id", file_id)
+                db.update_group_setting(message.chat.id, "welcome_message", caption)
+                bot.reply_to(message,
+                    "✅ <b>Welcome GIF set!</b>\n\n"
+                    "New members will be greeted with your animated GIF + caption.\n"
+                    "<i>Use {name} or {id} for personalization.</i>",
+                    parse_mode="HTML")
+                return
+
+            elif m.text:
+                db.update_group_setting(message.chat.id, "welcome_type", "text")
+                db.update_group_setting(message.chat.id, "welcome_file_id", "")
+                db.update_group_setting(message.chat.id, "welcome_message", m.text)
+                bot.reply_to(message,
+                    "✅ <b>Welcome text set!</b>\n"
+                    "<i>Use {name} or {id} for personalization.</i>",
+                    parse_mode="HTML")
+                return
+            else:
+                bot.reply_to(message,
+                    "❌ Unsupported type. Reply to a <b>text</b>, <b>photo+caption</b>, or <b>GIF+caption</b>.",
+                    parse_mode="HTML")
+                return
+
+        # ── Inline text method: /setwelcome <text> ──
+        parts = message.text.split(None, 1)
+        if len(parts) > 1:
+            db.update_group_setting(message.chat.id, "welcome_type", "text")
+            db.update_group_setting(message.chat.id, "welcome_file_id", "")
+            db.update_group_setting(message.chat.id, "welcome_message", parts[1])
+            bot.reply_to(message,
+                "✅ <b>Welcome message updated!</b>\n<i>Use {name} or {id} to personalize.</i>",
+                parse_mode="HTML")
+        # ── Show current setting ──
+        group_data = db.get_group(message.chat.id)
+        current_msg = group_data.get("welcome_message", "Welcome, {name}! 👋")
+        current_type = group_data.get("welcome_type", "text")
+        
+        bot.reply_to(message,
+            f"💡 <b>Current Welcome Message ({current_type}):</b>\n\n"
+            f"<code>{html.escape(current_msg)}</code>\n\n"
+            "📌 <b>How to set:</b>\n"
+            "1️⃣ <b>Text:</b> <code>/setwelcome Hello {name}!</code>\n"
+            "2️⃣ <b>Image + Caption:</b> Send a photo, then <b>reply</b> with <code>/setwelcome</code>\n"
+            "3️⃣ <b>GIF + Caption:</b> Send a GIF, then <b>reply</b> with <code>/setwelcome</code>\n\n"
+            "📌 <b>Placeholders:</b>\n"
+            "• <code>{name}</code> - Full name\n"
+            "• <code>{username}</code> - @username\n"
+            "• <code>{date}</code> - Today's date\n"
+            "• <code>{group}</code> - Group title\n"
+            "• <code>{id}</code> - User ID",
+            parse_mode="HTML")
+
+
+    # ── /setleave ──
+    @bot.message_handler(commands=['setleave'])
+    def cmd_setleave(message):
+        if message.chat.type not in ['group', 'supergroup']:
+            return
+        if not is_admin(bot, message.chat.id, message.from_user.id) and not is_owner(message.from_user.username): return reply_not_admin(bot, message)
+
+        # ── Reply method for photos/GIFs/text ──
+        if message.reply_to_message:
+            m = message.reply_to_message
+            if m.photo:
+                file_id = m.photo[-1].file_id
+                caption = m.caption or "Goodbye, {name}!"
+                db.update_group_setting(message.chat.id, "leave_type", "photo")
+                db.update_group_setting(message.chat.id, "leave_file_id", file_id)
+                db.update_group_setting(message.chat.id, "leave_message", caption)
+                bot.reply_to(message, "✅ <b>Leave photo set!</b>\n<i>Use {name} or {id} for personalization.</i>", parse_mode="HTML")
+                return
+
+            elif m.animation:
+                file_id = m.animation.file_id
+                caption = m.caption or "Goodbye, {name}!"
+                db.update_group_setting(message.chat.id, "leave_type", "gif")
+                db.update_group_setting(message.chat.id, "leave_file_id", file_id)
+                db.update_group_setting(message.chat.id, "leave_message", caption)
+                bot.reply_to(message, "✅ <b>Leave GIF set!</b>\n<i>Use {name} or {id} for personalization.</i>", parse_mode="HTML")
+                return
+
+            elif m.text:
+                db.update_group_setting(message.chat.id, "leave_type", "text")
+                db.update_group_setting(message.chat.id, "leave_file_id", "")
+                db.update_group_setting(message.chat.id, "leave_message", m.text)
+                bot.reply_to(message, "✅ <b>Leave text set!</b>\n<i>Use {name} or {id} for personalization.</i>", parse_mode="HTML")
+                return
+            else:
+                bot.reply_to(message, "❌ Unsupported type. Reply to a <b>text</b>, <b>photo+caption</b>, or <b>GIF+caption</b>.", parse_mode="HTML")
+                return
+
+        # ── Inline text method: /setleave <text> ──
+        parts = message.text.split(None, 1)
+        if len(parts) > 1:
+            db.update_group_setting(message.chat.id, "leave_type", "text")
+            db.update_group_setting(message.chat.id, "leave_file_id", "")
+            db.update_group_setting(message.chat.id, "leave_message", parts[1])
+            bot.reply_to(message, "✅ <b>Leave message updated!</b>\n<i>Use {name} or {id} to personalize.</i>", parse_mode="HTML")
+        # ── Show current setting ──
+        group_data = db.get_group(message.chat.id)
+        current_msg = group_data.get("leave_message", "Goodbye {name}!")
+        current_type = group_data.get("leave_type", "text")
+
+        bot.reply_to(message,
+            f"💡 <b>Current Leave Message ({current_type}):</b>\n\n"
+            f"<code>{html.escape(current_msg)}</code>\n\n"
+            "📌 <b>How to set:</b>\n"
+            "1️⃣ <b>Text:</b> <code>/setleave Goodbye {name}!</code>\n"
+            "2️⃣ <b>Image + Caption:</b> Send a photo, then <b>reply</b> with <code>/setleave</code>\\n"
+            "3️⃣ <b>GIF + Caption:</b> Send a GIF, then <b>reply</b> with <code>/setleave</code>\\n\\n"
+            "📌 <b>Placeholders:</b>\\n"
+            "• <code>{name}</code> - Full name\\n"
+            "• <code>{username}</code> - @username\\n"
+            "• <code>{date}</code> - Today's date\\n"
+            "• <code>{group}</code> - Group title\\n"
+            "• <code>{id}</code> - User ID",
+            parse_mode="HTML")
+
+
+    @bot.message_handler(commands=['captchamutetime'])
+    def cmd_captchamutetime(message):
+        if message.chat.type not in ['group', 'supergroup']: return
+        if not is_admin(bot, message.chat.id, message.from_user.id) and not is_owner(message.from_user.username): return reply_not_admin(bot, message)
+        parts = message.text.split()
+        if len(parts) > 1:
+            val = parts[1].lower()
+            if val in ('off', 'none', '0'):
+                db.update_group_setting(message.chat.id, "captcha_mute_time", "")
+                bot.reply_to(message, "✅ CAPTCHA mute time disabled. Users stay muted indefinitely until solved.")
+            else:
+                secs, disp = parse_duration(val)
+                if secs is None:
+                    bot.reply_to(message, f"❌ {disp}")
+                else:
+                    db.update_group_setting(message.chat.id, "captcha_mute_time", disp)
+                    group = db.get_group(message.chat.id)
+                    panel_text, markup = build_captcha_panel(message.chat.id, group)
+                    bot.reply_to(message, f"✅ Auto-unmute time set to <b>{disp}</b>.\n\n" + panel_text, reply_markup=markup, parse_mode="HTML")
+        else:
+            group = db.get_group(message.chat.id)
+            panel_text, markup = build_captcha_panel(message.chat.id, group)
+            bot.reply_to(message, panel_text, reply_markup=markup, parse_mode="HTML")
+
+    @bot.message_handler(commands=['captchakicktime'])
+    def cmd_captchakicktime(message):
+        if message.chat.type not in ['group', 'supergroup']: return
+        if not is_admin(bot, message.chat.id, message.from_user.id) and not is_owner(message.from_user.username): return reply_not_admin(bot, message)
+        parts = message.text.split()
+        if len(parts) > 1:
+            val = parts[1].lower()
+            if val in ('off', 'none', '0'):
+                db.update_group_setting(message.chat.id, "captcha_kick_time", "")
+                bot.reply_to(message, "✅ CAPTCHA kick time disabled.")
+            else:
+                secs, disp = parse_duration(val)
+                if secs is None:
+                    bot.reply_to(message, f"❌ {disp}")
+                else:
+                    db.update_group_setting(message.chat.id, "captcha_kick_time", disp)
+                    group = db.get_group(message.chat.id)
+                    panel_text, markup = build_captcha_panel(message.chat.id, group)
+                    bot.reply_to(message, f"✅ Auto-kick time set to <b>{disp}</b>.\n\n" + panel_text, reply_markup=markup, parse_mode="HTML")
+        else:
+            group = db.get_group(message.chat.id)
+            panel_text, markup = build_captcha_panel(message.chat.id, group)
+            bot.reply_to(message, panel_text, reply_markup=markup, parse_mode="HTML")
+
+    @bot.message_handler(commands=['captcha'])
+    def cmd_captcha(message):
+        if message.chat.type not in ['group', 'supergroup']: return
+        if not is_admin(bot, message.chat.id, message.from_user.id) and not is_owner(message.from_user.username): return reply_not_admin(bot, message)
+        parts = message.text.split()
+        if len(parts) > 1:
+            val = parts[1].lower() in ('yes', 'on', 'true', '1')
+            db.update_group_setting(message.chat.id, "captcha", int(val))
+        group = db.get_group(message.chat.id)
+        panel_text, markup = build_captcha_panel(message.chat.id, group)
+        bot.reply_to(message, panel_text, reply_markup=markup, parse_mode="HTML")
+
+    @bot.message_handler(commands=['captchamutetime'])
+    def cmd_captchamutetime(message):
+        if message.chat.type not in ['group', 'supergroup']: return
+        if not is_admin(bot, message.chat.id, message.from_user.id) and not is_owner(message.from_user.username): return reply_not_admin(bot, message)
+        parts = message.text.split()
+        if len(parts) > 1:
+            val = parts[1].lower()
+            if val in ('off', 'none', '0'):
+                db.update_group_setting(message.chat.id, "captcha_mute_time", "")
+                bot.reply_to(message, "✅ CAPTCHA mute time disabled. Users stay muted indefinitely until solved.")
+            else:
+                secs, disp = parse_duration(val)
+                if secs is None:
+                    bot.reply_to(message, f"❌ {disp}")
+                else:
+                    db.update_group_setting(message.chat.id, "captcha_mute_time", disp)
+                    group = db.get_group(message.chat.id)
+                    panel_text, markup = build_captcha_panel(message.chat.id, group)
+                    bot.reply_to(message, f"✅ Auto-unmute time set to <b>{disp}</b>.\n\n" + panel_text, reply_markup=markup, parse_mode="HTML")
+        else:
+            group = db.get_group(message.chat.id)
+            panel_text, markup = build_captcha_panel(message.chat.id, group)
+            bot.reply_to(message, panel_text, reply_markup=markup, parse_mode="HTML")
+
+    @bot.message_handler(commands=['setcaptchatext'])
+    def cmd_setcaptchatext(message):
+        if message.chat.type not in ['group', 'supergroup']: return
+        if not is_admin(bot, message.chat.id, message.from_user.id) and not is_owner(message.from_user.username): return reply_not_admin(bot, message)
+        parts = message.text.split(None, 1)
+        if len(parts) > 1:
+            db.update_group_setting(message.chat.id, "captcha_text", parts[1])
+            bot.reply_to(message, "✅ Custom CAPTCHA text updated.")
+        else:
+            group = db.get_group(message.chat.id)
+            val = group.get("captcha_text", "Click to prove you are human")
+            bot.reply_to(message, f"Current CAPTCHA text is: {val}\nUse /setcaptchatext <text> to change.")
+
+    @bot.message_handler(commands=['resetcaptchatext'])
+    def cmd_resetcaptchatext(message):
+        if message.chat.type not in ['group', 'supergroup']: return
+        if not is_admin(bot, message.chat.id, message.from_user.id) and not is_owner(message.from_user.username): return reply_not_admin(bot, message)
+        db.update_group_setting(message.chat.id, "captcha_text", "Click to prove you are human")
+        bot.reply_to(message, "✅ CAPTCHA text reset to default.")
+
+    # ── /rules ──
+    @bot.message_handler(commands=['rules'])
+    def cmd_rules(message):
+        if message.chat.type not in ['group', 'supergroup']:
+            return
+        group = db.get_group(message.chat.id)
+        if group:
+            bot.reply_to(message, group.get("rules", "No rules set."))
+
+    # ── /addfilter ──
+    @bot.message_handler(commands=['addfilter'])
+    def cmd_addfilter(message):
+        if message.chat.type not in ['group', 'supergroup']:
+            return
+        if not is_admin(bot, message.chat.id, message.from_user.id) and not is_owner(message.from_user.username): return reply_not_admin(bot, message)
+        parts = message.text.split(None, 1)
+        if len(parts) < 2:
+            return bot.reply_to(message, "Format: /addfilter <keyword> (reply to media/text)")
+        keyword = parts[1].strip()
+        if not message.reply_to_message:
+            return bot.reply_to(message, "You must reply to the content you want to set as the filter response.")
+        m = message.reply_to_message
+        filter_data = {}
+        if m.text:
+            filter_data = {"type": "text", "text": m.text}
+        elif m.photo:
+            filter_data = {"type": "photo", "file_id": m.photo[-1].file_id, "caption": m.caption or ""}
+        elif m.sticker:
+            filter_data = {"type": "sticker", "file_id": m.sticker.file_id}
+        elif m.animation:
+            filter_data = {"type": "gif", "file_id": m.animation.file_id}
+        else:
+            return bot.reply_to(message, "Unsupported media type.")
+        db.add_filter(message.chat.id, keyword, filter_data)
+        bot.reply_to(message, f"✅ Filter '<code>{keyword}</code>' added!", parse_mode="HTML")
+
+    # ── /removefilter ──
+    @bot.message_handler(commands=['removefilter'])
+    def cmd_removefilter(message):
+        if message.chat.type not in ['group', 'supergroup']:
+            return
+        if not is_admin(bot, message.chat.id, message.from_user.id) and not is_owner(message.from_user.username): return reply_not_admin(bot, message)
+        parts = message.text.split(None, 1)
+        if len(parts) < 2:
+            return bot.reply_to(message, "Format: /removefilter <keyword>")
+        db.remove_filter(message.chat.id, parts[1].strip())
+        bot.reply_to(message, f"✅ Filter '<code>{parts[1].strip()}</code>' removed.", parse_mode="HTML")
+
+    # ── /filters ──
+    @bot.message_handler(commands=['filters'])
+    def cmd_list_filters(message):
+        if message.chat.type not in ['group', 'supergroup']:
+            return
+        group = db.get_group(message.chat.id)
+        if not group or not group.get("filters"):
+            return bot.reply_to(message, "No filters defined for this group.")
+        fts = group["filters"].keys()
+        text = "<b>🔍 Active Group Filters:</b>\n\n" + "\n".join([f"• <code>{f}</code>" for f in fts])
+        bot.reply_to(message, text, parse_mode="HTML")
+
     # ── /lock ──
     @bot.message_handler(commands=['lock'])
     def cmd_lock(message):
@@ -2285,6 +2883,7 @@ def register_handlers(bot):
             telebot.types.BotCommand("setkeywords",  "Set keyword alert words"),
             telebot.types.BotCommand("lock",         "Lock the group"),
             telebot.types.BotCommand("unlock",       "Unlock the group"),
+            telebot.types.BotCommand("locks",        "Show locks status"),
             telebot.types.BotCommand("promote",      "Promote to Administrator"),
             telebot.types.BotCommand("demote",       "Remove Administrator rights"),
             telebot.types.BotCommand("link",         "Fetch group invite link"),
@@ -2853,6 +3452,86 @@ def register_handlers(bot):
                             logger.error(f"Keyword alert send failed: {e}")
             except Exception as e:
                 logger.error(f"Keyword alert error: {e}")
+
+        # ── 🔒 Granular Locks — delete if locked ──
+        if not user_is_admin and not user_is_owner:
+            ctype = getattr(message, 'content_type', None)
+            try:
+                if ctype == 'sticker' and group.get("lock_sticker"):
+                    try:
+                        bot.delete_message(message.chat.id, message.message_id)
+                    except:
+                        pass
+                    db.log_event(f"🔒 Sticker deleted for {message.from_user.id} in {message.chat.id} (lock_sticker)")
+                    return
+                elif ctype == 'animation' and group.get("lock_animation"):
+                    try:
+                        bot.delete_message(message.chat.id, message.message_id)
+                    except:
+                        pass
+                    db.log_event(f"🔒 GIF deleted for {message.from_user.id} in {message.chat.id} (lock_animation)")
+                    return
+                elif ctype in ('photo','video','document','audio','voice','video_note') and group.get("lock_media"):
+                    try:
+                        bot.delete_message(message.chat.id, message.message_id)
+                    except:
+                        pass
+                    db.log_event(f"🔒 Media deleted for {message.from_user.id} in {message.chat.id} (lock_media)")
+                    return
+                elif ctype == 'poll' and group.get("lock_poll"):
+                    try:
+                        bot.delete_message(message.chat.id, message.message_id)
+                    except:
+                        pass
+                    return
+                elif ctype == 'game' and group.get("lock_game"):
+                    try:
+                        bot.delete_message(message.chat.id, message.message_id)
+                    except:
+                        pass
+                    return
+                # URL check (text/caption)
+                if group.get("lock_url"):
+                    has_url = False
+                    if message.entities:
+                        for ent in message.entities:
+                            if ent.type in ('url','text_link'):
+                                has_url = True
+                                break
+                    if not has_url and getattr(message, 'caption_entities', None):
+                        for ent in message.caption_entities:
+                            if ent.type in ('url','text_link'):
+                                has_url = True
+                                break
+                    if not has_url:
+                        low = (content or "").lower()
+                        if "http://" in low or "https://" in low or "www." in low or "t.me/" in low:
+                            has_url = True
+                    if has_url:
+                        try:
+                            bot.delete_message(message.chat.id, message.message_id)
+                            db.log_event(f"🔒 URL deleted for {message.from_user.id} in {message.chat.id} (lock_url)")
+                            return
+                        except:
+                            pass
+                # Forward check
+                if group.get("lock_forward") and (getattr(message, 'forward_from', None) or getattr(message, 'forward_from_chat', None) or getattr(message, 'forward_sender_name', None)):
+                    try:
+                        bot.delete_message(message.chat.id, message.message_id)
+                        db.log_event(f"🔒 Forward deleted for {message.from_user.id} in {message.chat.id} (lock_forward)")
+                        return
+                    except:
+                        pass
+                # Inline (via_bot)
+                if group.get("lock_inline") and getattr(message, 'via_bot', None):
+                    try:
+                        bot.delete_message(message.chat.id, message.message_id)
+                        db.log_event(f"🔒 Inline deleted for {message.from_user.id} in {message.chat.id} (lock_inline)")
+                        return
+                    except:
+                        pass
+            except Exception as e:
+                logger.error(f"Granular lock check failed: {e}")
 
         # ── 🔍 Auto-reply filters ──
         filters = group.get("filters", {})

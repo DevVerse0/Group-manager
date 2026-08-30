@@ -777,6 +777,34 @@ async def keyword_alert_words(chat_id: str = Form(""), words: str = Form("")):
 
 
 # ─────────────────────────────────────────────────────────────
+# API — GRANULAR LOCKS TOGGLE
+# ─────────────────────────────────────────────────────────────
+
+@app.post("/api/lock/toggle")
+async def lock_toggle(chat_id: str = Form(""), lock_type: str = Form("")):
+    valid = {"lock_sticker","lock_animation","lock_media","lock_url","lock_forward","lock_inline","lock_poll","lock_game"}
+    if lock_type not in valid:
+        return JSONResponse({"ok": False, "error": "Invalid lock type"}, status_code=400)
+    group = db.get_group(chat_id.strip())
+    if not group:
+        return JSONResponse({"ok": False, "error": "Group not found"}, status_code=404)
+    current = group.get(lock_type, 0)
+    new_status = 1 if not current else 0
+    db.update_group_setting(chat_id.strip(), lock_type, new_status)
+    db.log_event(f"🔒 {lock_type} toggled {'ON' if new_status else 'OFF'} for {chat_id} via dashboard")
+    return JSONResponse({"ok": True, lock_type: bool(new_status), "value": bool(new_status)})
+
+
+@app.get("/api/lock/status")
+async def lock_status(chat_id: str):
+    group = db.get_group(chat_id.strip())
+    if not group:
+        return JSONResponse({"ok": False, "error": "Group not found"}, status_code=404)
+    locks = {k: bool(group.get(k, 0)) for k in ["lock_sticker","lock_animation","lock_media","lock_url","lock_forward","lock_inline","lock_poll","lock_game"]}
+    return JSONResponse({"ok": True, "locks": locks})
+
+
+# ─────────────────────────────────────────────────────────────
 # API — ACTIVE MODERATION LIST & REVOCATION (Unmute/Unban)
 # ─────────────────────────────────────────────────────────────
 

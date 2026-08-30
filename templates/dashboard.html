@@ -428,6 +428,7 @@ input:checked+.mini-slider:before{transform:translateX(18px);}
                 <div class="action-pills">
                   <button class="btn btn-ghost btn-sm" onclick="quickGroupMsg('{{ gid }}', '{{ g.name }}')" title="Send message">💬</button>
                   <button class="btn btn-cyan btn-sm" onclick="openGroupManage('{{ gid }}', '{{ g.name|e }}')" title="Advanced Manage">⚙️</button>
+                  <button class="btn btn-ghost btn-sm" onclick="openLocksManage('{{ gid }}')" title="Granular Locks">🔐</button>
                   <button class="btn btn-warning btn-sm" onclick="quickLock('{{ gid }}', 'lock')" title="Lock group">🔒</button>
                   <button class="btn btn-success btn-sm" onclick="quickLock('{{ gid }}', 'unlock')" title="Unlock group">🔓</button>
                   <form action="/api/delete_entry" method="POST" style="margin:0;" onsubmit="return confirm('Delete this group record?')">
@@ -1015,6 +1016,47 @@ input:checked+.mini-slider:before{transform:translateX(18px);}
   </div>
 </div>
 
+<!-- Locks Management Modal -->
+<div id="locksManageModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:10000;align-items:center;justify-content:center;overflow-y:auto;padding:20px;">
+  <div style="background:#0d1128;border:1px solid var(--border);border-radius:20px;padding:28px;max-width:520px;width:100%;box-shadow:var(--shadow);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+      <div style="font-weight:700;font-size:1.2rem;" id="locksTitle">🔒 Locks</div>
+      <button class="btn btn-ghost btn-icon btn-sm" onclick="closeLocksManage()">✕</button>
+    </div>
+    <input type="hidden" id="locksChatId">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;" onclick="toggleLock('lock_sticker')">
+        <span>🃏 Stickers</span><input type="checkbox" id="lock_sticker" style="width:auto;">
+      </label>
+      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;" onclick="toggleLock('lock_animation')">
+        <span>🎞️ GIFs</span><input type="checkbox" id="lock_animation" style="width:auto;">
+      </label>
+      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;" onclick="toggleLock('lock_media')">
+        <span>🖼️ Media</span><input type="checkbox" id="lock_media" style="width:auto;">
+      </label>
+      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;" onclick="toggleLock('lock_url')">
+        <span>🔗 Links</span><input type="checkbox" id="lock_url" style="width:auto;">
+      </label>
+      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;" onclick="toggleLock('lock_forward')">
+        <span>↗️ Forwards</span><input type="checkbox" id="lock_forward" style="width:auto;">
+      </label>
+      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;" onclick="toggleLock('lock_inline')">
+        <span>🤖 Inline</span><input type="checkbox" id="lock_inline" style="width:auto;">
+      </label>
+      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;" onclick="toggleLock('lock_poll')">
+        <span>📊 Polls</span><input type="checkbox" id="lock_poll" style="width:auto;">
+      </label>
+      <label style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--surface2);border-radius:12px;border:1px solid var(--border);cursor:pointer;" onclick="toggleLock('lock_game')">
+        <span>🎮 Games</span><input type="checkbox" id="lock_game" style="width:auto;">
+      </label>
+    </div>
+    <div class="divider"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button class="btn btn-ghost" onclick="closeLocksManage()">Close</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ── TOAST ──
 (function(){
@@ -1266,6 +1308,34 @@ async function toggleKeywordAlert(chatId, labelEl){
       const chk=labelEl.querySelector('input');
       if(chk)chk.checked=d.keyword_alert;
       showToast(`Keyword Alert ${d.keyword_alert?'Enabled ✅':'Disabled ❌'}`,'success');
+    } else showToast('❌ '+d.error,'error');
+  }catch(e){showToast('❌ Request failed','error');}
+}
+
+async function openLocksManage(chatId){
+  document.getElementById('locksChatId').value = chatId;
+  document.getElementById('locksTitle').textContent = '🔒 Locks — ' + chatId;
+  try{
+    const d = await (await fetch('/api/lock/status?chat_id='+encodeURIComponent(chatId))).json();
+    if(d.ok){
+      for(const k of ["lock_sticker","lock_animation","lock_media","lock_url","lock_forward","lock_inline","lock_poll","lock_game"]){
+        const el = document.getElementById(k);
+        if(el) el.checked = !!d.locks[k];
+      }
+    }
+  }catch(e){}
+  document.getElementById('locksManageModal').style.display = 'flex';
+}
+function closeLocksManage(){ document.getElementById('locksManageModal').style.display = 'none'; }
+async function toggleLock(lockType){
+  const chatId = document.getElementById('locksChatId').value;
+  const fd=new FormData();fd.append('chat_id',chatId);fd.append('lock_type',lockType);
+  try{
+    const d=await (await fetch('/api/lock/toggle',{method:'POST',body:fd})).json();
+    if(d.ok){
+      const el=document.getElementById(lockType);
+      if(el) el.checked=d.value;
+      showToast(`${lockType} ${d.value?'Locked 🔒':'Unlocked 🔓'}`,'success');
     } else showToast('❌ '+d.error,'error');
   }catch(e){showToast('❌ Request failed','error');}
 }
