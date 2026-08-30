@@ -825,50 +825,52 @@ def register_handlers(bot):
         main_group_link = config.get("main_group_link", "").strip()
         bot_username    = bot.get_me().username
 
+        # ── Buttons like the reference image ──
         markup = InlineKeyboardMarkup()
-
-        # ── Row 1: Join Main Group (if set) ──
+        # Row 1: ADD ME BABY (full width)
+        markup.row(InlineKeyboardButton("• ADD ME BABY •", url=f"https://t.me/{bot_username}?startgroup=true"))
+        # Row 2: UPDATE | SUPPORT
+        row2 = []
+        # UPDATE -> main group link if set, else support channel
         if main_group_link:
-            markup.row(
-                InlineKeyboardButton(
-                    "🚀 Join Our Main Group",
-                    url=main_group_link
-                )
-            )
-
-        # ── Row 2: Add Me to Your Group ──
-        markup.row(
-            InlineKeyboardButton(
-                "➕ Add Me to Your Group",
-                url=f"https://t.me/{bot_username}?startgroup=true"
-            )
-        )
-
-        # ── Row 3: Commands & Help + Support Channel ──
-        row3 = [InlineKeyboardButton("📜 Commands & Help", callback_data="show_help")]
+            row2.append(InlineKeyboardButton("• UPDATE •", url=main_group_link))
+        elif support_channel:
+            row2.append(InlineKeyboardButton("• UPDATE •", url=f"https://t.me/{support_channel}"))
+        else:
+            row2.append(InlineKeyboardButton("• UPDATE •", url=f"https://t.me/{owner}"))
         if support_channel:
-            row3.append(InlineKeyboardButton("📢 Support Channel", url=f"https://t.me/{support_channel}"))
-        markup.row(*row3)
-
-        # ── Row 4: Contact Owner ──
-        markup.row(InlineKeyboardButton("👤 Contact Owner", url=f"https://t.me/{owner}"))
+            row2.append(InlineKeyboardButton("• SUPPORT •", url=f"https://t.me/{support_channel}"))
+        else:
+            row2.append(InlineKeyboardButton("• SUPPORT •", url=f"https://t.me/{owner}"))
+        markup.row(*row2)
+        # Row 3: HELP AND COMMANDS (full width)
+        markup.row(InlineKeyboardButton("• HELP AND COMMANDS •", callback_data="show_help"))
+        # Optional: keep Join Main Group as extra if set (above ADD ME BABY)
+        if main_group_link:
+            # Insert at top as first row
+            markup.keyboard.insert(0, [InlineKeyboardButton("🚀 Join Main Group", url=main_group_link)])
 
         first = html.escape(str(message.from_user.first_name or "there"))
+        # Live stats for the image style
+        try:
+            stats = db.get_all_stats()
+            users_count = stats.get("total_users", 0)
+            chats_count = stats.get("total_groups", 0)
+        except:
+            users_count = 0
+            chats_count = 0
+        line = "─" * 33
         text = (
-            f"👋 <b>Hey, {first}!</b>\n"
-            "Welcome to <b>Ultimate Group Manager</b>\n\n"
-            "🛡️ <b>Your all-in-one Telegram Group Manager</b>\n"
-            "Keep your community <b>safe, clean and under control</b> with powerful "
-            "Telegram-based moderation and management tools.\n\n"
-            "🧰 <b>Core Features</b>\n\n"
-            "🛡️ <b>Advanced Protection</b> — Anti-spam, flood control & link blocking\n"
-            "🤬 <b>Smart Filters</b> — Bad words detection & automatic moderation\n"
-            "👋 <b>Smart Welcome</b> — Text, photo, GIF & custom greetings\n"
-            "⚔️ <b>Full Moderation</b> — Ban, kick, mute, warn & restrict\n"
-            "⚙️ <b>Admin Tools</b> — Locks, filters, rules & group settings\n"
-            "📊 <b>Chat Tools</b> — Rankings, statistics & group activity\n\n"
-            "⚡ <b>Powerful tools. Simple control. One bot.</b>\n\n"
-            "👇 Add me to your group and take control of your community."
+            f"○ HEY {first},\n"
+            f"○ I AM <b>Ultimate Group Manager</b> 🥂✨,\n"
+            f"○ I HAVE SPECIAL FEATURES\n"
+            f"{line}\n"
+            f"○ USERS → <b>{users_count}</b>\n"
+            f"○ CHATS → <b>{chats_count}</b>\n"
+            f"{line}\n"
+            f"○ I HAVE MOST POWERFULL FEATURES\n"
+            f"MUSIC BOT + CHATBOT + MANAGEMENT\n"
+            f"{line}\n"
         )
         bot.reply_to(message, text, reply_markup=markup, parse_mode="HTML")
 
