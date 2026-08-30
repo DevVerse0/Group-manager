@@ -854,19 +854,20 @@ def register_handlers(bot):
         markup.row(InlineKeyboardButton("👤 Contact Owner", url=f"https://t.me/{owner}"))
 
         first = html.escape(str(message.from_user.first_name or "there"))
-        line = "─" * 33
+        line = "━" * 16
         text = (
-            f"○ HEY {first},\n"
-            f"○ I AM <b>Ultimate Group Manager</b> 🥂✨,\n"
-            f"○ I HAVE SPECIAL FEATURES\n"
-            f"{line}\n"
-            f"○ 🛡️ <b>Advanced Protection</b> — Anti-spam, flood control & link blocking\n"
-            f"○ 🤬 <b>Smart Filters</b> — Bad words detection & automatic moderation\n"
-            f"○ 👋 <b>Smart Welcome</b> — Text, photo, GIF & custom greetings\n"
-            f"○ ⚔️ <b>Full Moderation</b> — Ban, kick, mute, warn & restrict\n"
-            f"○ ⚙️ <b>Admin Tools</b> — Locks, filters, rules & group settings\n"
-            f"○ 📊 <b>Chat Tools</b> — Rankings, statistics & group activity\n"
-            f"{line}\n"
+            f"✦ HEY, {first}\n"
+            f"Welcome to <b>Ultimate Group Manager</b>.\n\n"
+            f"Your smart solution for powerful,\n"
+            f"secure & effortless group management.\n\n"
+            f"{line}\n\n"
+            f"🛡️ Protect your community\n"
+            f"⚔️ Moderate with precision\n"
+            f"👋 Automate every welcome\n"
+            f"📊 Track what matters\n\n"
+            f"{line}\n\n"
+            f"<b>Ultimate Group Manager</b>\n"
+            f"One Bot. Complete Control.\n"
         )
         bot.reply_to(message, text, reply_markup=markup, parse_mode="HTML")
 
