@@ -851,25 +851,18 @@ def register_handlers(bot):
             markup.keyboard.insert(0, [InlineKeyboardButton("🚀 Join Main Group", url=main_group_link)])
 
         first = html.escape(str(message.from_user.first_name or "there"))
-        # Live stats for the image style
-        try:
-            stats = db.get_all_stats()
-            users_count = stats.get("total_users", 0)
-            chats_count = stats.get("total_groups", 0)
-        except:
-            users_count = 0
-            chats_count = 0
         line = "─" * 33
         text = (
             f"○ HEY {first},\n"
             f"○ I AM <b>Ultimate Group Manager</b> 🥂✨,\n"
             f"○ I HAVE SPECIAL FEATURES\n"
             f"{line}\n"
-            f"○ USERS → <b>{users_count}</b>\n"
-            f"○ CHATS → <b>{chats_count}</b>\n"
-            f"{line}\n"
-            f"○ I HAVE MOST POWERFULL FEATURES\n"
-            f"MUSIC BOT + CHATBOT + MANAGEMENT\n"
+            f"○ 🛡️ <b>Advanced Protection</b> — Anti-spam, flood control & link blocking\n"
+            f"○ 🤬 <b>Smart Filters</b> — Bad words detection & automatic moderation\n"
+            f"○ 👋 <b>Smart Welcome</b> — Text, photo, GIF & custom greetings\n"
+            f"○ ⚔️ <b>Full Moderation</b> — Ban, kick, mute, warn & restrict\n"
+            f"○ ⚙️ <b>Admin Tools</b> — Locks, filters, rules & group settings\n"
+            f"○ 📊 <b>Chat Tools</b> — Rankings, statistics & group activity\n"
             f"{line}\n"
         )
         bot.reply_to(message, text, reply_markup=markup, parse_mode="HTML")
