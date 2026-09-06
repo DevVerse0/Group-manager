@@ -23,11 +23,6 @@ from datetime import timezone
 
 logger = logging.getLogger(__name__)
 
-try:
-    tictactoe.init_db()
-except Exception:
-    pass
-
 # ── Rate-limit tracker: {(chat_id, user_id): deque of timestamps} ──
 _msg_timestamps = collections.defaultdict(collections.deque)
 _SPAM_MAX    = 5    # max messages
@@ -3203,6 +3198,8 @@ def register_handlers(bot):
             markup = build_lobby_markup(game_id, message.chat.id)
             # Get lobby data for message formatting
             lobby = get_game(game_id)
+            if not lobby:
+                return bot.reply_to(message, "❌ Error creating game. Please try again.")
             text = format_lobby_message(lobby)
             bot.reply_to(message, text, reply_markup=markup, parse_mode="HTML")
         elif args[1] == 'rank':
@@ -3245,8 +3242,13 @@ def register_handlers(bot):
                 if not ok:
                     bot.answer_callback_query(call.id, msg)
                     return
-                create_game_from_lobby(game_id)
+                if not create_game_from_lobby(game_id):
+                    bot.answer_callback_query(call.id, "Error starting game.")
+                    return
                 game = get_game(game_id)
+                if not game:
+                    bot.answer_callback_query(call.id, "Error starting game.")
+                    return
                 markup = build_board_markup(game_id, game['board'])
                 text = format_game_message(game)
                 bot.edit_message_text(text, chat_id=chat_id, message_id=call.message.message_id, reply_markup=markup, parse_mode="HTML")
@@ -3261,6 +3263,11 @@ def register_handlers(bot):
                 board, msg = make_move(game_id, str(call.from_user.id), pos)
                 if board is None:
                     bot.answer_callback_query(call.id, msg)
+                    return
+                # Re-fetch for fresh status/board after the move
+                game = get_game(game_id)
+                if not game:
+                    bot.answer_callback_query(call.id, "Game not found.")
                     return
                 status = game.get('status', 'ACTIVE')
                 if status in ('PLAYER_X_WON', 'PLAYER_O_WON', 'DRAW'):

@@ -31,6 +31,51 @@ __all__ = [
 def now():
     return datetime.now(_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
+def _is_pg():
+    """True when the app is running on PostgreSQL (production)."""
+    try:
+        return getattr(db, "backend", "sqlite") == "pg"
+    except Exception:
+        return False
+
+def _row_to_dict(cur, row):
+    """Convert a DB row to a plain dict on both SQLite and Postgres.
+
+    SQLite rows are sqlite3.Row sequences (needs cursor.description for
+    column names); Postgres RealDictCursor rows are already dicts.
+    """
+    if row is None:
+        return None
+    if isinstance(row, dict):
+        return dict(row)
+    try:
+        cols = [d[0] for d in cur.description]
+    except Exception:
+        return None
+    try:
+        return dict(zip(cols, list(row)))
+    except Exception:
+        return None
+
+def _rows_to_dicts(cur, rows):
+    out = []
+    for r in rows or []:
+        d = _row_to_dict(cur, r)
+        if d is not None:
+            out.append(d)
+    return out
+
+def _begin_atomic():
+    """Start a write transaction (SQLite: BEGIN IMMEDIATE, PG: BEGIN)."""
+    if _is_pg():
+        db.conn.execute("BEGIN")
+    else:
+        db.conn.execute("BEGIN IMMEDIATE")
+
+def _for_update():
+    """Row-locking clause for SELECT inside a transaction (PG only)."""
+    return " FOR UPDATE" if _is_pg() else ""
+
 def display_board(board):
     symbols = {'X': '❌', 'O': '⭕', '.': '⬜'}
     rows = []
@@ -83,34 +128,26 @@ def get_game(game_id):
     try:
         c = db.conn.cursor()
         c.execute("SELECT * FROM ttt_lobbies WHERE game_id=?", (game_id,))
-        row = c.fetchone()
-        if row:
-            cols = [d[0] for d in c.description]
-            return dict(zip(cols, row))
+        game = _row_to_dict(c, c.fetchone())
+        if game:
+            return game
         c.execute("SELECT * FROM ttt_games WHERE game_id=?", (game_id,))
-        row = c.fetchone()
-        if row:
-            cols = [d[0] for d in c.description]
-            return dict(zip(cols, row))
-        return None
-    except:
+        return _row_to_dict(c, c.fetchone())
+    except Exception as e:
+        logger.error(f"Get game error: {e}")
         return None
 
 def get_active_game(chat_id):
     try:
         c = db.conn.cursor()
         c.execute("SELECT * FROM ttt_lobbies WHERE chat_id=? AND status='WAITING_FOR_PLAYER' ORDER BY created_at DESC LIMIT 1", (str(chat_id),))
-        row = c.fetchone()
-        if row:
-            cols = [d[0] for d in c.description]
-            return dict(zip(cols, row))
+        game = _row_to_dict(c, c.fetchone())
+        if game:
+            return game
         c.execute("SELECT * FROM ttt_games WHERE chat_id=? AND status='ACTIVE' ORDER BY created_at DESC LIMIT 1", (str(chat_id),))
-        row = c.fetchone()
-        if row:
-            cols = [d[0] for d in c.description]
-            return dict(zip(cols, row))
-        return None
-    except:
+        return _row_to_dict(c, c.fetchone())
+    except Exception as e:
+        logger.error(f"Get active game error: {e}")
         return None
 
 def create_lobby(chat_id, player1_id, player1_name):
@@ -130,15 +167,13 @@ def create_lobby(chat_id, player1_id, player1_name):
 
 def join_lobby(game_id, player2_id, player2_name):
     try:
-        db.conn.execute("BEGIN IMMEDIATE")
+        _begin_atomic()
         c = db.conn.cursor()
-        c.execute("SELECT * FROM ttt_lobbies WHERE game_id=? AND status='WAITING_FOR_PLAYER'", (game_id,))
-        row = c.fetchone()
-        if not row:
+        c.execute("SELECT * FROM ttt_lobbies WHERE game_id=? AND status='WAITING_FOR_PLAYER'" + _for_update(), (game_id,))
+        game = _row_to_dict(c, c.fetchone())
+        if not game:
             db.conn.rollback()
             return False, "Game not found or already full"
-        cols = [d[0] for d in c.description]
-        game = dict(zip(cols, row))
         if game['player2_id']:
             db.conn.rollback()
             return False, "This game is already full"
@@ -166,16 +201,25 @@ def create_game_from_lobby(game_id):
     try:
         c = db.conn.cursor()
         c.execute("SELECT * FROM ttt_lobbies WHERE game_id=?", (game_id,))
-        row = c.fetchone()
-        if not row:
+        lobby = _row_to_dict(c, c.fetchone())
+        if not lobby:
             return False
-        cols = [d[0] for d in c.description]
-        lobby = dict(zip(cols, row))
         now_val = now()
-        c.execute("""INSERT OR REPLACE INTO ttt_games (game_id, chat_id, message_id, player1_id, player1_name, player2_id, player2_name, board, current_turn, status, winner, created_at, updated_at)
-                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                  (game_id, lobby['chat_id'], lobby['message_id'], lobby['player1_id'], lobby['player1_name'],
-                   lobby['player2_id'], lobby['player2_name'], lobby['board'], lobby['current_turn'], 'ACTIVE', None, now_val, now_val))
+        params = (game_id, lobby['chat_id'], lobby['message_id'], lobby['player1_id'], lobby['player1_name'],
+                  lobby['player2_id'], lobby['player2_name'], lobby['board'], lobby['current_turn'], 'ACTIVE', None, now_val, now_val)
+        if _is_pg():
+            c.execute("""INSERT INTO ttt_games (game_id, chat_id, message_id, player1_id, player1_name, player2_id, player2_name, board, current_turn, status, winner, created_at, updated_at)
+                         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                         ON CONFLICT (game_id) DO UPDATE SET
+                           chat_id=excluded.chat_id, message_id=excluded.message_id,
+                           player1_id=excluded.player1_id, player1_name=excluded.player1_name,
+                           player2_id=excluded.player2_id, player2_name=excluded.player2_name,
+                           board=excluded.board, current_turn=excluded.current_turn,
+                           status='ACTIVE', winner=NULL,
+                           created_at=excluded.created_at, updated_at=excluded.updated_at""", params)
+        else:
+            c.execute("""INSERT OR REPLACE INTO ttt_games (game_id, chat_id, message_id, player1_id, player1_name, player2_id, player2_name, board, current_turn, status, winner, created_at, updated_at)
+                         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""", params)
         c.execute("DELETE FROM ttt_lobbies WHERE game_id=?", (game_id,))
         db.conn.commit()
         return True
@@ -185,19 +229,17 @@ def create_game_from_lobby(game_id):
 
 def make_move(game_id, player_id, position):
     try:
-        db.conn.execute("BEGIN IMMEDIATE")
+        _begin_atomic()
         c = db.conn.cursor()
-        c.execute("SELECT * FROM ttt_games WHERE game_id=? AND status='ACTIVE'", (game_id,))
-        row = c.fetchone()
-        if not row:
+        c.execute("SELECT * FROM ttt_games WHERE game_id=? AND status='ACTIVE'" + _for_update(), (game_id,))
+        game = _row_to_dict(c, c.fetchone())
+        if not game:
             game = get_game(game_id)
             if not game:
                 db.conn.rollback()
                 return None, "Game not found"
             db.conn.rollback()
             return None, f"Game is {game.get('status', 'unknown')}"
-        cols = [d[0] for d in c.description]
-        game = dict(zip(cols, row))
         if str(player_id) not in (game['player1_id'], game['player2_id']):
             db.conn.rollback()
             return None, "You are not a player in this game"
@@ -252,9 +294,7 @@ def update_score(chat_id, user_id, result):
     try:
         c = db.conn.cursor()
         c.execute("SELECT * FROM ttt_scores WHERE chat_id=? AND user_id=?", (str(chat_id), str(user_id)))
-        row = c.fetchone()
-        cols = [d[0] for d in c.description]
-        score = dict(zip(cols, row)) if row else None
+        score = _row_to_dict(c, c.fetchone())
         if not score:
             c.execute("INSERT INTO ttt_scores (chat_id, user_id, games_played, wins, losses, draws, total_points) VALUES (?,?,0,0,0,0,0)", (str(chat_id), str(user_id)))
             db.conn.commit()
@@ -286,20 +326,32 @@ def update_score(chat_id, user_id, result):
 def get_scores(chat_id, limit=10):
     try:
         c = db.conn.cursor()
-        c.execute("""SELECT s.*, u.name FROM ttt_scores s LEFT JOIN users u ON s.user_id=u.user_id
-                     WHERE s.chat_id=? ORDER BY s.total_points DESC LIMIT ?""", (str(chat_id), limit))
-        return [dict(zip([d[0] for d in c.description], row)) for row in c.fetchall()]
-    except:
+        try:
+            c.execute("""SELECT s.*, u.name FROM ttt_scores s LEFT JOIN users u ON s.user_id=u.user_id
+                         WHERE s.chat_id=? ORDER BY s.total_points DESC LIMIT ?""", (str(chat_id), limit))
+            return _rows_to_dicts(c, c.fetchall())
+        except Exception:
+            try:
+                db.conn.rollback()
+            except Exception:
+                pass
+            c = db.conn.cursor()
+            c.execute("""SELECT * FROM ttt_scores
+                         WHERE chat_id=? ORDER BY total_points DESC LIMIT ?""", (str(chat_id), limit))
+            return _rows_to_dicts(c, c.fetchall())
+    except Exception as e:
+        logger.error(f"Get scores error: {e}")
         return []
 
 def get_global_scores(limit=20):
     try:
         c = db.conn.cursor()
-        c.execute("""SELECT chat_id, user_id, SUM(games_played) as games_played, SUM(wins) as wins,
+        c.execute("""SELECT user_id, SUM(games_played) as games_played, SUM(wins) as wins,
                      SUM(losses) as losses, SUM(draws) as draws, SUM(total_points) as total_points
                      FROM ttt_scores GROUP BY user_id ORDER BY total_points DESC LIMIT ?""", (limit,))
-        return [dict(zip([d[0] for d in c.description], row)) for row in c.fetchall()]
-    except:
+        return _rows_to_dicts(c, c.fetchall())
+    except Exception as e:
+        logger.error(f"Get global scores error: {e}")
         return []
 
 # ── BUILD MARKUP ──
@@ -346,16 +398,20 @@ def build_game_over_markup(board):
 # ── DISPLAY HELPERS ──
 
 def format_lobby_message(game):
-    p1 = game['player1_name'] or 'Unknown'
-    p2 = game['player2_name'] or 'Waiting...'
+    if not game:
+        return "❌ Game not found. It may have expired — send /ttt to start a new one."
+    p1 = game.get('player1_name') or 'Unknown'
+    p2 = game.get('player2_name') or 'Waiting...'
     return (f"❌ Tic Tac Toe ⭕\n\n"
             f"👤 Player 1 (❌): {p1}\n"
             f"👤 Player 2 (⭕): {p2}\n\n"
             f"✨ Click below to join and play!")
 
 def format_game_message(game):
-    p1 = game['player1_name'] or 'Unknown'
-    p2 = game['player2_name'] or 'Unknown'
+    if not game:
+        return "❌ Game not found."
+    p1 = game.get('player1_name') or 'Unknown'
+    p2 = game.get('player2_name') or 'Unknown'
     turn_emoji = '❌' if game['current_turn'] == 'X' else '⭕'
     turn_name = p1 if game['current_turn'] == 'X' else p2
     return (f"❌ Tic Tac Toe ⭕\n\n"

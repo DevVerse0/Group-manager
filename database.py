@@ -98,6 +98,10 @@ class _PGCursor:
     def fetchall(self):
         return self.raw.fetchall()
 
+    @property
+    def description(self):
+        return self.raw.description
+
     def close(self):
         return self.raw.close()
 
