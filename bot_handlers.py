@@ -180,6 +180,39 @@ def format_alert_message(msg_key, default_msg, target_user):
     t_name = getattr(target_user, 'first_name', t_id)
     return msg.replace("{name}", t_name).replace("{id}", t_id)
 
+def friendly_error(e):
+    """Convert raw exceptions (especially Telegram API errors) into clean,
+    user-friendly English messages. Raw details go to logs, not chats."""
+    try:
+        logger.error(f"User-facing error details: {e}")
+    except Exception:
+        pass
+    try:
+        msg = str(e).lower()
+    except Exception:
+        msg = ""
+    if "message can't be deleted" in msg or "message to delete not found" in msg:
+        return "I don't have permission to delete messages. Please give me the Delete Messages admin right."
+    if ("not enough rights" in msg or "need administrator" in msg
+            or "admin rights" in msg or "have no rights" in msg
+            or "not an administrator" in msg or "bot is not an admin" in msg
+            or "need admin" in msg):
+        return "I don't have permission to do that. Please make me an admin with the required rights."
+    if "user is an administrator" in msg or "can't demote" in msg:
+        return "I can't take action against another admin."
+    if ("user not found" in msg or "user_id_invalid" in msg
+            or "peer_id_invalid" in msg or "user_id is empty" in msg):
+        return "I couldn't find that user. Please reply to their message or use a valid @username."
+    if "bot is not a member" in msg or "bot was kicked" in msg or "bot_kicked" in msg:
+        return "I'm not a member of this chat anymore."
+    if "message not modified" in msg:
+        return "Nothing to update."
+    if "too many requests" in msg or "retry after" in msg or "flood" in msg:
+        return "Telegram is rate-limiting me right now. Please try again in a moment."
+    if "chat not found" in msg:
+        return "Chat not found."
+    return "Something went wrong. Please try again later."
+
 def get_target_user(message):
     """
     Robustly identifies a target user from a message.
@@ -1025,7 +1058,7 @@ def register_handlers(bot):
                 text += f"{symbol} {admin.user.first_name} (<code>{admin.user.id}</code>)\n"
             bot.reply_to(message, text, parse_mode="HTML")
         except Exception as e:
-            bot.reply_to(message, f"Failed to fetch admin list: {e}")
+            bot.reply_to(message, f"❌ Couldn't fetch admin list: {friendly_error(e)}")
 
     # ── /ban ──
     @bot.message_handler(commands=['ban'])
@@ -1050,7 +1083,7 @@ def register_handlers(bot):
             markup.add(InlineKeyboardButton("Click to unban", callback_data=f"unban_{t_id}"))
             bot.reply_to(message, format_alert_message("msg_after_ban", "🔨 User <b>{name}</b> (<code>{id}</code>) has been <b>banned</b>.", target), parse_mode="HTML", reply_markup=markup)
         except Exception as e:
-            bot.reply_to(message, f"Failed to ban: {str(e)}")
+            bot.reply_to(message, f"❌ Ban failed: {friendly_error(e)}")
 
     # ── /kick ──
     @bot.message_handler(commands=['kick'])
@@ -1073,7 +1106,7 @@ def register_handlers(bot):
             name = getattr(target, 'first_name', str(t_id))
             bot.reply_to(message, format_alert_message("msg_after_kick", "Booted 👢 User <b>{name}</b> (<code>{id}</code>) has been <b>kicked</b>.", target), parse_mode="HTML")
         except Exception as e:
-            bot.reply_to(message, f"Failed to kick: {str(e)}")
+            bot.reply_to(message, f"❌ Kick failed: {friendly_error(e)}")
 
     # ── /mute ──
     @bot.message_handler(commands=['mute'])
@@ -1118,7 +1151,7 @@ def register_handlers(bot):
             name = getattr(target, 'first_name', str(t_id))
             bot.reply_to(message, f"<b>{name}</b> banned by developer.", parse_mode="HTML")
         except Exception as e:
-            bot.reply_to(message, f"Failed to ban: {str(e)}")
+            bot.reply_to(message, f"❌ Ban failed: {friendly_error(e)}")
 
     @bot.message_handler(commands=['s_kick'])
     def cmd_s_kick(message):
@@ -1137,7 +1170,7 @@ def register_handlers(bot):
             name = getattr(target, 'first_name', str(t_id))
             bot.reply_to(message, f"<b>{name}</b> kicked by developer.", parse_mode="HTML")
         except Exception as e:
-            bot.reply_to(message, f"Failed to kick: {str(e)}")
+            bot.reply_to(message, f"❌ Kick failed: {friendly_error(e)}")
 
     @bot.message_handler(commands=['s_mute'])
     def cmd_s_mute(message):
@@ -1159,7 +1192,7 @@ def register_handlers(bot):
             name = getattr(target, 'first_name', str(t_id))
             bot.reply_to(message, f"<b>{name}</b> muted by developer.", parse_mode="HTML")
         except Exception as e:
-            bot.reply_to(message, f"Failed to mute: {str(e)}")
+            bot.reply_to(message, f"❌ Mute failed: {friendly_error(e)}")
 
     # ── /unmute ──
     @bot.message_handler(commands=['unmute'])
@@ -1207,7 +1240,7 @@ def register_handlers(bot):
             name = getattr(target, 'first_name', str(t_id))
             bot.reply_to(message, f"🕊️ User <b>{name}</b> (<code>{t_id}</code>) has been <b>unbanned</b>.", parse_mode="HTML")
         except Exception as e:
-            bot.reply_to(message, f"❌ <b>Unban Failed:</b>\n<code>{str(e)}</code>", parse_mode="HTML")
+            bot.reply_to(message, f"❌ <b>Unban failed:</b> {friendly_error(e)}", parse_mode="HTML")
 
     # ── /tmute — TIME-BASED MUTE ──
     @bot.message_handler(commands=['tmute'])
@@ -1284,7 +1317,7 @@ def register_handlers(bot):
         except Exception as e:
             logger.error(f"tmute failed: {e}")
             try:
-                bot.send_message(message.chat.id, f"❌ Mute failed: {str(e)}")
+                bot.send_message(message.chat.id, f"❌ Mute failed: {friendly_error(e)}")
             except Exception:
                 pass
 
@@ -1359,7 +1392,7 @@ def register_handlers(bot):
         except Exception as e:
             logger.error(f"tban failed: {e}")
             try:
-                bot.send_message(message.chat.id, f"❌ Ban failed: {str(e)}")
+                bot.send_message(message.chat.id, f"❌ Ban failed: {friendly_error(e)}")
             except Exception:
                 pass
 
@@ -1426,7 +1459,7 @@ def register_handlers(bot):
                 db.reset_warnings(t_id)
                 bot.reply_to(message, f"⚠️ User <b>{name}</b> (<code>{t_id}</code>) reached 3 warnings and was <b>banned</b>.", parse_mode="HTML")
             except Exception as e:
-                bot.reply_to(message, f"⚠️ 3 warnings reached, but I couldn't ban them: {e}")
+                bot.reply_to(message, f"⚠️ 3 warnings reached, but {friendly_error(e)}")
         else:
             bot.reply_to(message, f"⚠️ User <b>{name}</b> (<code>{t_id}</code>) warned. (<b>{warnings}/3</b>)", parse_mode="HTML")
 
@@ -1562,7 +1595,7 @@ def register_handlers(bot):
                     "👤 Go to Group Settings → Administrators → select the bot → enable <b>\"Add new admins\"</b>.",
                     parse_mode="HTML")
             else:
-                bot.reply_to(message, f"Failed to promote: {e}")
+                bot.reply_to(message, f"❌ Promote failed: {friendly_error(e)}")
 
     # ── /demote ──
     @bot.message_handler(commands=['demote'])
@@ -1584,7 +1617,7 @@ def register_handlers(bot):
             name = getattr(target, 'first_name', str(t_id))
             bot.reply_to(message, f"⏬ User <b>{name}</b> (<code>{t_id}</code>) has been <b>demoted</b>.", parse_mode="HTML")
         except Exception as e:
-            bot.reply_to(message, f"Failed to demote: {e}")
+            bot.reply_to(message, f"❌ Demote failed: {friendly_error(e)}")
 
     # ── /pin ──
     @bot.message_handler(commands=['pin'])
@@ -2013,7 +2046,7 @@ def register_handlers(bot):
             try:
                 bot.set_chat_permissions(message.chat.id, telebot.types.ChatPermissions(can_send_messages=False))
             except Exception as e:
-                return bot.reply_to(message, f"Failed to lock: {e}")
+                return bot.reply_to(message, f"❌ Lock failed: {friendly_error(e)}")
             for k in ["lock_sticker","lock_animation","lock_media","lock_url","lock_forward","lock_inline","lock_poll","lock_game"]:
                 _set_lock(message.chat.id, k, True)
             return bot.reply_to(message, "🔒 <b>Group locked</b> — all messages and all types restricted.", parse_mode="HTML")
@@ -2035,7 +2068,7 @@ def register_handlers(bot):
                     can_send_other_messages=True, can_add_web_page_previews=True
                 ))
             except Exception as e:
-                return bot.reply_to(message, f"Failed to unlock: {e}")
+                return bot.reply_to(message, f"❌ Unlock failed: {friendly_error(e)}")
             # Also unlock all granular
             for k in ["lock_sticker","lock_animation","lock_media","lock_url","lock_forward","lock_inline","lock_poll","lock_game"]:
                 _set_lock(message.chat.id, k, False)
@@ -2050,7 +2083,7 @@ def register_handlers(bot):
                     can_send_other_messages=True, can_add_web_page_previews=True
                 ))
             except Exception as e:
-                return bot.reply_to(message, f"Failed to unlock: {e}")
+                return bot.reply_to(message, f"❌ Unlock failed: {friendly_error(e)}")
             for k in ["lock_sticker","lock_animation","lock_media","lock_url","lock_forward","lock_inline","lock_poll","lock_game"]:
                 _set_lock(message.chat.id, k, False)
             return bot.reply_to(message, "🔓 <b>Group unlocked</b> — all restrictions lifted.", parse_mode="HTML")
@@ -2170,7 +2203,7 @@ def register_handlers(bot):
                     "👤 Go to Group Settings → Administrators → select the bot → enable <b>\"Add new admins\"</b>.",
                     parse_mode="HTML")
             else:
-                bot.reply_to(message, f"Failed to promote: {e}")
+                bot.reply_to(message, f"❌ Promote failed: {friendly_error(e)}")
 
     # ── /demote ──
     @bot.message_handler(commands=['demote'])
@@ -2192,7 +2225,7 @@ def register_handlers(bot):
             name = getattr(target, 'first_name', str(t_id))
             bot.reply_to(message, f"⏬ User <b>{name}</b> (<code>{t_id}</code>) has been <b>demoted</b>.", parse_mode="HTML")
         except Exception as e:
-            bot.reply_to(message, f"Failed to demote: {e}")
+            bot.reply_to(message, f"❌ Demote failed: {friendly_error(e)}")
 
     # ── /pin ──
     @bot.message_handler(commands=['pin'])
@@ -2567,7 +2600,7 @@ def register_handlers(bot):
             bot.set_chat_permissions(message.chat.id, telebot.types.ChatPermissions(can_send_messages=False))
             bot.reply_to(message, "🔒 <b>Group Locked!</b> Regular members can no longer send messages.", parse_mode="HTML")
         except Exception as e:
-            bot.reply_to(message, f"Failed to lock: {e}")
+            bot.reply_to(message, f"❌ Lock failed: {friendly_error(e)}")
 
     # ── /unlock ──
     @bot.message_handler(commands=['unlock'])
@@ -2581,7 +2614,7 @@ def register_handlers(bot):
                 can_send_other_messages=True, can_add_web_page_previews=True))
             bot.reply_to(message, "🔓 <b>Group Unlocked!</b> Regular members can now speak.", parse_mode="HTML")
         except Exception as e:
-            bot.reply_to(message, f"Failed to unlock: {e}")
+            bot.reply_to(message, f"❌ Unlock failed: {friendly_error(e)}")
 
     # ── /link ──
     @bot.message_handler(commands=['link'])
@@ -2818,7 +2851,7 @@ def register_handlers(bot):
                     parse_mode="HTML"
                 )
             except Exception as e:
-                bot.answer_callback_query(call.id, f"Failed: {e}")
+                bot.answer_callback_query(call.id, f"Failed: {friendly_error(e)}")
                 return
             bot.answer_callback_query(call.id, "User Approved ✅")
         elif action == "decline_user":
@@ -2830,7 +2863,7 @@ def register_handlers(bot):
                     parse_mode="HTML"
                 )
             except Exception as e:
-                bot.answer_callback_query(call.id, f"Failed to ban: {e}")
+                bot.answer_callback_query(call.id, f"Ban failed: {friendly_error(e)}")
                 return
             bot.answer_callback_query(call.id, "User Declined ❌")
 
@@ -2894,7 +2927,7 @@ def register_handlers(bot):
             except Exception:
                 pass  # Missing delete permission — message already sent, ignore
         except Exception as e:
-            bot.reply_to(message, f"Error: {e}")
+            bot.reply_to(message, f"❌ {friendly_error(e)}")
 
     # ── Register bot commands ──
     try:
@@ -2984,7 +3017,7 @@ def register_handlers(bot):
                 bot.answer_callback_query(call.id, "✅ User unmuted.", show_alert=True)
                 bot.edit_message_text(f"{call.message.text}\n\n✅ User was unmuted by {call.from_user.first_name}", chat_id=call.message.chat.id, message_id=call.message.message_id)
         except Exception as e:
-            bot.answer_callback_query(call.id, f"Failed: {str(e)}", show_alert=True)
+            bot.answer_callback_query(call.id, f"Failed: {friendly_error(e)}", show_alert=True)
 
     # ── CAPTCHA Callback Query Handler ──
     @bot.callback_query_handler(func=lambda call: call.data.startswith('captcha_verify:'))
@@ -3152,7 +3185,7 @@ def register_handlers(bot):
                 pass  # Message unchanged, no edit needed
 
         except Exception as e:
-            bot.answer_callback_query(call.id, f"Error: {e}", show_alert=True)
+            bot.answer_callback_query(call.id, friendly_error(e), show_alert=True)
 
 
     # ── CHAT ACTIVITY / RANKINGS SYSTEM (isolated module) ──
