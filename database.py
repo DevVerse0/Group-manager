@@ -384,7 +384,9 @@ class Database:
                 "lock_forward INTEGER DEFAULT 0",
                 "lock_inline INTEGER DEFAULT 0",
                 "lock_poll INTEGER DEFAULT 0",
-                "lock_game INTEGER DEFAULT 0"
+"lock_game INTEGER DEFAULT 0",
+                "lock_chat_off INTEGER DEFAULT 0",
+                "tictactoe INTEGER DEFAULT 0"
                 ]:
                     try:
                         c.execute(f"ALTER TABLE groups ADD COLUMN {col}")
@@ -400,12 +402,21 @@ class Database:
                     "lock_forward INTEGER DEFAULT 0",
                     "lock_inline INTEGER DEFAULT 0",
                     "lock_poll INTEGER DEFAULT 0",
-                    "lock_game INTEGER DEFAULT 0"
+"lock_game INTEGER DEFAULT 0",
+                "lock_chat_off INTEGER DEFAULT 0"
                 ]:
                     try:
                         c.execute(f"ALTER TABLE groups ADD COLUMN {col}")
                     except sqlite3.OperationalError:
                         pass # Column already exists
+
+                # ── TIC TAC TOE TABLES ──
+                c.execute("""CREATE TABLE IF NOT EXISTS ttt_lobbies (game_id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, message_id INTEGER, player1_id TEXT NOT NULL, player1_name TEXT NOT NULL, player2_id TEXT, player2_name TEXT, board TEXT DEFAULT '.........', current_turn TEXT DEFAULT 'X', status TEXT DEFAULT 'WAITING_FOR_PLAYER', created_at TEXT, updated_at TEXT, expires_at TEXT)""")
+                c.execute("""CREATE INDEX IF NOT EXISTS idx_ttt_lobby_chat ON ttt_lobbies(chat_id, status)""")
+                c.execute("""CREATE TABLE IF NOT EXISTS ttt_games (game_id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, message_id INTEGER, player1_id TEXT NOT NULL, player1_name TEXT NOT NULL, player2_id TEXT, player2_name TEXT, board TEXT DEFAULT '.........', current_turn TEXT DEFAULT 'X', status TEXT DEFAULT 'ACTIVE', winner TEXT, created_at TEXT, updated_at TEXT)""")
+                c.execute("""CREATE INDEX IF NOT EXISTS idx_ttt_game_chat ON ttt_games(chat_id, status)""")
+                c.execute("""CREATE TABLE IF NOT EXISTS ttt_scores (chat_id TEXT NOT NULL, user_id TEXT NOT NULL, games_played INTEGER DEFAULT 0, wins INTEGER DEFAULT 0, losses INTEGER DEFAULT 0, draws INTEGER DEFAULT 0, total_points INTEGER DEFAULT 0, consecutive_wins INTEGER DEFAULT 0, PRIMARY KEY (chat_id, user_id))""")
+                c.execute("""CREATE INDEX IF NOT EXISTS idx_ttt_score_chat ON ttt_scores(chat_id, total_points DESC)""")
 
                 # Per-user overall message totals per group
                 c.execute("""
@@ -1095,7 +1106,7 @@ class Database:
                                 "captcha_kick", "captcha_kick_time", "captcha_text",
                                 "chat_tracking", "user_milestones", "group_milestones", "leaderboard",
                                 "keyword_alert", "keyword_alert_words",
-                                "lock_sticker", "lock_animation", "lock_media", "lock_url", "lock_forward", "lock_inline", "lock_poll", "lock_game"}
+                                "lock_sticker", "lock_animation", "lock_media", "lock_url", "lock_forward", "lock_inline", "lock_poll", "lock_game", "lock_chat_off", "tictactoe"}
                     if key in valid_keys:
                         try:
                             c.execute(f"UPDATE groups SET {key}=? WHERE chat_id=?", (value, str_id))
@@ -1121,6 +1132,111 @@ class Database:
                 _group_cache.invalidate(f"group:{str_id}")
             except Exception as e:
                 print(f"Error in update_group_setting: {e}")
+
+    # ── TIC TAC TOE METHODS ──
+    def add_ttt_game(self, data):
+        if not self._check_conn(): return
+        with self.lock:
+            try:
+                c = self.conn.cursor()
+                c.execute("""INSERT INTO tictactoe_games (game_id, chat_id, player_x, player_o, board, current_turn, state, winner, consecutive_wins, created_at)
+                             VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                         (data['game_id'], data['chat_id'], data['player_x'], data['player_o'],
+                          data['board'], data['current_turn'], data['state'], data['winner'],
+                          data['consecutive_wins'], data['created_at']))
+                self.conn.commit()
+            except Exception as e:
+                print(f"Error in add_ttt_game: {e}")
+
+    def get_game(self, game_id):
+        if not self._check_conn(): return None
+        with self.lock:
+            try:
+                c = self.conn.cursor()
+                c.execute("SELECT * FROM tictactoe_games WHERE game_id=?", (game_id,))
+                row = c.fetchone()
+                return dict(row) if row else None
+            except:
+                return None
+
+    def update_game(self, game_id, updates):
+        if not self._check_conn(): return
+        with self.lock:
+            try:
+                c = self.conn.cursor()
+                set_clause = ', '.join([f"{k}=?" for k in updates.keys()])
+                values = list(updates.values()) + [game_id]
+                c.execute(f"UPDATE tictactoe_games SET {set_clause} WHERE game_id=?", values)
+                self.conn.commit()
+            except Exception as e:
+                print(f"Error in update_game: {e}")
+
+    def get_games_by_chat(self, chat_id):
+        if not self._check_conn(): return []
+        with self.lock:
+            try:
+                c = self.conn.cursor()
+                c.execute("SELECT * FROM tictactoe_games WHERE chat_id=? ORDER BY created_at DESC", (str(chat_id),))
+                return [dict(row) for row in c.fetchall()]
+            except:
+                return []
+
+    def init_ttt_score(self, chat_id, user_id):
+        if not self._check_conn(): return
+        with self.lock:
+            try:
+                c = self.conn.cursor()
+                c.execute("INSERT OR IGNORE INTO tictactoe_scores (chat_id, user_id) VALUES (?,?)", (str(chat_id), str(user_id)))
+                self.conn.commit()
+            except Exception as e:
+                print(f"Error in init_ttt_score: {e}")
+
+    def get_ttt_score(self, chat_id, user_id):
+        if not self._check_conn(): return {'wins':0,'total_games':0,'consecutive_wins':0,'total_points':0}
+        with self.lock:
+            try:
+                c = self.conn.cursor()
+                c.execute("SELECT * FROM tictactoe_scores WHERE chat_id=? AND user_id=?", (str(chat_id), str(user_id)))
+                row = c.fetchone()
+                return dict(row) if row else {'wins':0,'total_games':0,'consecutive_wins':0,'total_points':0}
+            except:
+                return {'wins':0,'total_games':0,'consecutive_wins':0,'total_points':0}
+
+    def update_ttt_score(self, chat_id, user_id, **kwargs):
+        if not self._check_conn(): return
+        with self.lock:
+            try:
+                c = self.conn.cursor()
+                set_clause = ', '.join([f"{k}=?" for k in kwargs.keys()])
+                values = list(kwargs.values()) + [str(chat_id), str(user_id)]
+                c.execute(f"UPDATE tictactoe_scores SET {set_clause} WHERE chat_id=? AND user_id=?", values)
+                self.conn.commit()
+            except Exception as e:
+                print(f"Error in update_ttt_score: {e}")
+
+    def get_ttt_leaderboard(self, chat_id, limit=10):
+        if not self._check_conn(): return []
+        with self.lock:
+            try:
+                c = self.conn.cursor()
+                c.execute("""SELECT s.*, u.name, u.username FROM tictactoe_scores s
+                             LEFT JOIN users u ON s.user_id = u.user_id
+                             WHERE s.chat_id=? ORDER BY s.total_points DESC LIMIT ?""", (str(chat_id), limit))
+                return [dict(row) for row in c.fetchall()]
+            except:
+                return []
+
+    def get_global_ttt_leaderboard(self, limit=20):
+        if not self._check_conn(): return []
+        with self.lock:
+            try:
+                c = self.conn.cursor()
+                c.execute("""SELECT chat_id, user_id, SUM(wins) as wins, SUM(total_games) as total_games,
+                             SUM(consecutive_wins) as consecutive_wins, SUM(total_points) as total_points
+                             FROM tictactoe_scores GROUP BY user_id ORDER BY total_points DESC LIMIT ?""", (limit,))
+                return [dict(row) for row in c.fetchall()]
+            except:
+                return []
 
     # â”€â”€ CAPTCHA MANAGEMENT â”€â”€
     def add_pending_captcha(self, chat_id, user_id, captcha_type, correct_answer):
@@ -1466,9 +1582,10 @@ class Database:
                     SELECT g.chat_id, g.name, g.message_count, g.member_count,
                            g.last_active, g.antispam, g.antispam_auto_delete_links,
                            g.keyword_alert, g.keyword_alert_words,
-                           g.lock_sticker, g.lock_animation, g.lock_media, g.lock_url,
-                           g.lock_forward, g.lock_inline, g.lock_poll, g.lock_game,
-                           g.welcome_message, g.welcome_type, g.welcome_file_id,
+g.lock_sticker, g.lock_animation, g.lock_media, g.lock_url,
+                            g.lock_forward, g.lock_inline, g.lock_poll, g.lock_game,
+                            g.tictactoe,
+                            g.welcome_message, g.welcome_type, g.welcome_file_id,
                            g.leave_message, g.leave_type, g.leave_file_id, g.strict_mode, g.max_warnings,
                            (SELECT COUNT(*) FROM filters WHERE chat_id = g.chat_id) as filter_count,
                            (SELECT COUNT(*) FROM bad_words WHERE chat_id = g.chat_id) as bad_words_count
@@ -1501,6 +1618,7 @@ class Database:
                         d.setdefault("lock_inline", 0)
                         d.setdefault("lock_poll", 0)
                         d.setdefault("lock_game", 0)
+                        d.setdefault("tictactoe", 0)
                         result[d["chat_id"]] = d
                     # Trigger migration for next request
                     try:

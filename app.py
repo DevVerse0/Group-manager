@@ -15,6 +15,12 @@ from database import db
 from bot_manager import bot_manager
 import telebot.types as tg_types
 import hashlib
+from tictactoe import init_db
+
+try:
+    init_db()
+except Exception:
+    pass
 
 # Admin panel protection (set ADMIN_PASSWORD or DASHBOARD_PASSWORD in env to enable)
 ADMIN_PASSWORD = (os.getenv("ADMIN_PASSWORD") or os.getenv("DASHBOARD_PASSWORD") or "").strip()
@@ -782,7 +788,7 @@ async def keyword_alert_words(chat_id: str = Form(""), words: str = Form("")):
 
 @app.post("/api/lock/toggle")
 async def lock_toggle(chat_id: str = Form(""), lock_type: str = Form("")):
-    valid = {"lock_sticker","lock_animation","lock_media","lock_url","lock_forward","lock_inline","lock_poll","lock_game"}
+    valid = {"lock_sticker","lock_animation","lock_media","lock_url","lock_forward","lock_inline","lock_poll","lock_game","lock_chat_off"}
     if lock_type not in valid:
         return JSONResponse({"ok": False, "error": "Invalid lock type"}, status_code=400)
     group = db.get_group(chat_id.strip())
@@ -800,7 +806,7 @@ async def lock_status(chat_id: str):
     group = db.get_group(chat_id.strip())
     if not group:
         return JSONResponse({"ok": False, "error": "Group not found"}, status_code=404)
-    locks = {k: bool(group.get(k, 0)) for k in ["lock_sticker","lock_animation","lock_media","lock_url","lock_forward","lock_inline","lock_poll","lock_game"]}
+    locks = {k: bool(group.get(k, 0)) for k in ["lock_sticker","lock_animation","lock_media","lock_url","lock_forward","lock_inline","lock_poll","lock_game","lock_chat_off","tictactoe"]}
     return JSONResponse({"ok": True, "locks": locks})
 
 

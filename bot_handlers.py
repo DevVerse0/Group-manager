@@ -1,18 +1,32 @@
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database import db
+from tictactoe import (init_db, get_game, get_active_game, create_lobby, join_lobby,
+    create_game_from_lobby, make_move, update_score, get_scores, get_global_scores,
+    build_lobby_markup, build_board_markup, build_game_over_markup,
+    format_lobby_message, format_game_message, format_game_over_message,
+    get_ttt_board_display)
 from chat_activity import register_chat_handlers, track_group_message
+
+try:
+    init_db()
+except Exception:
+    pass
+
 import logging
 import time as _time
 import collections
 import html
 import threading
 import re
-import random
-import io
 from datetime import timezone
 
 logger = logging.getLogger(__name__)
+
+try:
+    tictactoe._init_db()
+except Exception:
+    pass
 
 # ── Rate-limit tracker: {(chat_id, user_id): deque of timestamps} ──
 _msg_timestamps = collections.defaultdict(collections.deque)
@@ -742,6 +756,7 @@ def register_handlers(bot):
         chat_id = chat_member_update.chat.id
         IN_GROUP  = ['member', 'administrator', 'creator', 'restricted']
         OUT_GROUP = ['left', 'kicked']
+        ADMIN_ROLES = ['administrator', 'creator']
 
         if chat_member_update.old_chat_member.status in OUT_GROUP and \
            chat_member_update.new_chat_member.status in IN_GROUP:
@@ -750,6 +765,14 @@ def register_handlers(bot):
         elif chat_member_update.old_chat_member.status in IN_GROUP and \
              chat_member_update.new_chat_member.status in OUT_GROUP:
             _handle_leave(chat_id, chat_member_update.old_chat_member.user, chat_member_update.chat)
+        
+        elif chat_member_update.old_chat_member.status not in ADMIN_ROLES and \
+             chat_member_update.new_chat_member.status in ADMIN_ROLES:
+            new_admin = chat_member_update.new_chat_member.user
+            try:
+                bot.send_message(new_admin.id, "👋 You've been added as an admin! You can now use admin commands like /admins, /promote, /demote, /kick, /mute, /ban, /filter, /word, /lock, /unlock, /tttset, /groupset, /report, /pin, /slowmode, /antispam, /antilink and more.", disable_web_page_preview=True)
+            except Exception:
+                pass
 
     # ── Service Messages fallback (Basic Groups) ──
     @bot.message_handler(content_types=['new_chat_members', 'left_chat_member'])
@@ -899,7 +922,7 @@ def register_handlers(bot):
                 "1m (minute), 1h (hour), 1d (day), 1w (week), 1mn (month), 1y (year)\n\n"
                 "<b>👮 Admin Tools:</b>\n"
                 "• /lock - Lock group (Admins only)\n"
-                "• /lock <type> - Lock specific: sticker|gif|media|url|forward|inline|poll|game|all\n"
+                "• /lock <type> - Lock specific: sticker|gif|media|url|forward|inline|poll|game|chat_off|all\n"
                 "• /unlock - Unlock group\n"
                 "• /unlock <type> - Unlock specific type\n"
                 "• /locks - Show locks status\n"
@@ -1948,6 +1971,7 @@ def register_handlers(bot):
         "poll": ("lock_poll", "Polls"),
         "game": ("lock_game", "Games"),
         "all": (None, "All"),
+        "chat_off": ("lock_chat_off", "Chat Off"),
     }
 
     def build_locks_markup(chat_id, group):
@@ -1965,6 +1989,7 @@ def register_handlers(bot):
             InlineKeyboardButton("🔒 Lock All", callback_data=f"lock:all:{chat_id}"),
             InlineKeyboardButton("🔓 Unlock All", callback_data=f"lock:unlockall:{chat_id}"),
         )
+        mk.row(btn("Chat Off", "lock_chat_off"))
         return mk
 
     def _set_lock(chat_id, lock_key, value):
@@ -1985,7 +2010,7 @@ def register_handlers(bot):
             return bot.reply_to(message, text, reply_markup=markup, parse_mode="HTML")
         typ = args[1].lower()
         if typ not in LOCK_TYPES:
-            return bot.reply_to(message, f"Unknown lock type <b>{html.escape(typ)}</b>.\nUse: <code>/lock sticker|gif|media|url|forward|inline|poll|game|all</code>\nOr just <code>/lock</code> for panel.", parse_mode="HTML")
+            return bot.reply_to(message, f"Unknown lock type <b>{html.escape(typ)}</b>.\nUse: <code>/lock sticker|gif|media|url|forward|inline|poll|game|chat_off|all</code>\nOr just <code>/lock</code> for panel.", parse_mode="HTML")
         lock_key, label = LOCK_TYPES[typ]
         if typ == "all":
             # General lock: mute all via permissions + set all granular locks ON
@@ -2074,6 +2099,23 @@ def register_handlers(bot):
             except:
                 pass
             bot.answer_callback_query(call.id, "All locked")
+        elif typ == "chat_off":
+            current = bool(group.get("lock_chat_off", 0))
+            _set_lock(chat_id, "lock_chat_off", not current)
+            if not current:
+                try:
+                    bot.set_chat_permissions(chat_id, telebot.types.ChatPermissions(can_send_messages=False))
+                except:
+                    pass
+                for k in ["lock_sticker","lock_animation","lock_media","lock_url","lock_forward","lock_inline","lock_poll","lock_game"]:
+                    _set_lock(chat_id, k, True)
+                bot.answer_callback_query(call.id, "🔒 Chat Off — All restrictions enabled")
+            else:
+                try:
+                    bot.set_chat_permissions(chat_id, telebot.types.ChatPermissions(can_send_messages=True, can_send_media_messages=True, can_send_other_messages=True, can_add_web_page_previews=True))
+                except:
+                    pass
+                bot.answer_callback_query(call.id, "🔓 Chat On — Chat restored")
         elif typ == "unlockall":
             for k in ["lock_sticker","lock_animation","lock_media","lock_url","lock_forward","lock_inline","lock_poll","lock_game"]:
                 _set_lock(chat_id, k, False)
@@ -3124,6 +3166,125 @@ def register_handlers(bot):
         logger.error(f"Failed to register chat activity handlers: {e}")
 
 
+    # ─────────────────────────────────────────────────────────────
+    # TIC TAC TOE GAME
+    # ─────────────────────────────────────────────────────────────
+
+    @bot.message_handler(commands=['tttset'])
+    def cmd_tttset(message):
+        if not is_admin(bot, message.chat.id, message.from_user.id) and not is_owner(message.from_user.username):
+            return reply_not_admin(bot, message)
+        current = db.get_group(message.chat.id).get("tictactoe", 0)
+        new_status = 0 if current else 1
+        db.update_group_setting(message.chat.id, "tictactoe", new_status)
+        status = "ENABLED" if new_status else "DISABLED"
+        bot.reply_to(message, f"🎮 Tic Tac Toe has been <b>{status}</b> in this group!", parse_mode="HTML")
+
+    @bot.message_handler(commands=['ttt'])
+    def cmd_ttt(message):
+        if message.chat.type not in ['group', 'supergroup']:
+            return
+        group = db.get_group(message.chat.id)
+        if not group or not group.get("tictactoe", 0):
+            return bot.reply_to(message, "❌ Tic Tac Toe is not enabled in this group.")
+        args = message.text.split()
+        if len(args) == 1:
+            existing = get_active_game(message.chat.id)
+            if existing:
+                if existing.get('status') == 'WAITING_FOR_PLAYER':
+                    return bot.reply_to(message, "⚠️ A Tic Tac Toe game is already waiting for a player.")
+                else:
+                    return bot.reply_to(message, "⚠️ A Tic Tac Toe game is already in progress.")
+            player1_id = str(message.from_user.id)
+            player1_name = message.from_user.first_name or "Unknown"
+            game_id = _create_lobby(message.chat.id, player1_id, player1_name)
+            if not game_id:
+                return bot.reply_to(message, "❌ Error creating game.")
+            markup = build_lobby_markup(game_id, message.chat.id)
+            # Get lobby data for message formatting
+            lobby = _get_game(game_id)
+            text = format_lobby_message(lobby)
+            bot.reply_to(message, text, reply_markup=markup, parse_mode="HTML")
+        elif args[1] == 'rank':
+            scores = _get_scores(message.chat.id, 10)
+            text = "🏆 <b>Tic Tac Toe Leaderboard</b>\n\n"
+            if not scores:
+                text += "No scores yet. Play a game!"
+            else:
+                for i, s in enumerate(scores, 1):
+                    name = s.get('name', s.get('user_id', '?'))
+                    points = s.get('total_points', 0)
+                    text += f"{i}. {name} — <b>{points} pts</b>\n"
+            return bot.reply_to(message, text, parse_mode="HTML")
+        elif args[1] == 'global':
+            scores = _get_global_scores(20)
+            text = "🌍 <b>Global Tic Tac Toe Leaderboard</b>\n\n"
+            if not scores:
+                text += "No scores yet!"
+            else:
+                for i, s in enumerate(scores, 1):
+                    uid = s.get('user_id', '?')
+                    points = s.get('total_points', 0)
+                    text += f"{i}. User {uid} — <b>{points} pts</b>\n"
+            return bot.reply_to(message, text, parse_mode="HTML")
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("ttt_"))
+    def ttt_callback(call):
+        try:
+            parts = call.data.split(":")
+            action = parts[0]
+            if action == "ttt_join":
+                game_id = parts[1]
+                chat_id = int(parts[2]) if len(parts) > 2 else None
+                if not chat_id:
+                    game = _get_game(game_id)
+                    chat_id = int(game['chat_id']) if game else call.message.chat.id
+                player2_id = str(call.from_user.id)
+                player2_name = call.from_user.first_name or "Unknown"
+                ok, msg = _join_lobby(game_id, player2_id, player2_name)
+                if not ok:
+                    bot.answer_callback_query(call.id, msg)
+                    return
+                _create_game_from_lobby(game_id)
+                game = _get_game(game_id)
+                markup = build_board_markup(game_id, game['board'])
+                text = format_game_message(game)
+                bot.edit_message_text(text, chat_id=chat_id, message_id=call.message.message_id, reply_markup=markup, parse_mode="HTML")
+                bot.answer_callback_query(call.id, "Joined!")
+            elif action == "ttt_move":
+                game_id = parts[1]
+                pos = int(parts[2])
+                game = _get_game(game_id)
+                if not game:
+                    bot.answer_callback_query(call.id, "Game not found.")
+                    return
+                board, msg = _make_move(game_id, str(call.from_user.id), pos)
+                if board is None:
+                    bot.answer_callback_query(call.id, msg)
+                    return
+                status = game.get('status', 'ACTIVE')
+                if status in ('PLAYER_X_WON', 'PLAYER_O_WON', 'DRAW'):
+                    markup = build_game_over_markup(game['board'])
+                else:
+                    markup = build_board_markup(game_id, game['board'])
+                text = format_game_message(game)
+                if status == 'PLAYER_X_WON':
+                    text = f"🏆 Player 1 (❌ {game['player1_name']}) wins!\n\n❌ {game['player1_name']} defeated ⭕ {game['player2_name']}\n\n{_display_board(game['board'])}"
+                elif status == 'PLAYER_O_WON':
+                    text = f"🏆 Player 2 (⭕ {game['player2_name']}) wins!\n\n⭕ {game['player2_name']} defeated ❌ {game['player1_name']}\n\n{_display_board(game['board'])}"
+                elif status == 'DRAW':
+                    text = f"🤝 It's a Draw!\n\n{_display_board(game['board'])}"
+                bot.edit_message_text(text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode="HTML")
+                bot.answer_callback_query(call.id)
+            elif action == "ttt_disabled":
+                bot.answer_callback_query(call.id)
+        except Exception as e:
+            logger.error(f"TTT callback error: {e}")
+            try:
+                bot.answer_callback_query(call.id, "Error processing move.")
+            except:
+                pass
+
     # ── CATCH-ALL: rate-limit spam + link spam + bad words + filters ──
     @bot.message_handler(
         func=lambda m: True,
@@ -3446,6 +3607,15 @@ def register_handlers(bot):
                             logger.error(f"Keyword alert send failed: {e}")
             except Exception as e:
                 logger.error(f"Keyword alert error: {e}")
+
+        # ── 🔒 Chat Off — delete all non-admin messages ──
+        if group.get("lock_chat_off") and not user_is_admin and not user_is_owner:
+            try:
+                bot.delete_message(message.chat.id, message.message_id)
+            except:
+                pass
+            db.log_event(f"🔒 Chat Off: message deleted for {message.from_user.id} in {message.chat.id}")
+            return
 
         # ── 🔒 Granular Locks — delete if locked ──
         if not user_is_admin and not user_is_owner:
