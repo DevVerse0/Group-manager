@@ -5,6 +5,7 @@ States: WAITING_FOR_PLAYER, ACTIVE, PLAYER_X_WON, PLAYER_O_WON, DRAW, CANCELLED,
 """
 
 import uuid
+import html
 import logging
 import threading
 from datetime import datetime, timedelta, timezone
@@ -75,6 +76,10 @@ def _begin_atomic():
 def _for_update():
     """Row-locking clause for SELECT inside a transaction (PG only)."""
     return " FOR UPDATE" if _is_pg() else ""
+
+def _esc(value):
+    """HTML-escape user-controlled text (names) for parse_mode='HTML'."""
+    return html.escape(str(value or ''), quote=False)
 
 def display_board(board):
     symbols = {'X': '❌', 'O': '⭕', '.': '✨'}
@@ -442,7 +447,7 @@ def build_game_over_markup(board):
 def format_lobby_message(game):
     if not game:
         return "❌ Game not found. It may have expired — send /ttt to start a new one."
-    p1 = game.get('player1_name') or 'Unknown'
+    p1 = _esc(game.get('player1_name')) or 'Unknown'
     return (f"❌ Tic Tac Toe ⭕\n\n"
             f"⚔️ {p1} vs ⏳ Waiting...\n\n"
             f"✨ Click below to join and play!")
@@ -450,8 +455,8 @@ def format_lobby_message(game):
 def format_game_message(game):
     if not game:
         return "❌ Game not found."
-    p1 = game.get('player1_name') or 'Unknown'
-    p2 = game.get('player2_name') or 'Unknown'
+    p1 = _esc(game.get('player1_name')) or 'Unknown'
+    p2 = _esc(game.get('player2_name')) or 'Unknown'
     turn_emoji = '❌' if game.get('current_turn') == 'X' else '⭕'
     turn_name = p1 if game.get('current_turn') == 'X' else p2
     return (f"❌ Tic Tac Toe ⭕\n\n"
@@ -461,8 +466,8 @@ def format_game_message(game):
 def format_game_over_message(game):
     if not game:
         return "❌ Game not found."
-    p1 = game.get('player1_name') or 'Unknown'
-    p2 = game.get('player2_name') or 'Unknown'
+    p1 = _esc(game.get('player1_name')) or 'Unknown'
+    p2 = _esc(game.get('player2_name')) or 'Unknown'
     board = game.get('board', '.........')
     winner = game.get('winner')
     text = "❌ Tic Tac Toe ⭕\n\n"

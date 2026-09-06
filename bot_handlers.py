@@ -3210,7 +3210,7 @@ def register_handlers(bot):
                 text += "No scores yet. Play a game!"
             else:
                 for i, s in enumerate(scores, 1):
-                    name = s.get('name', s.get('user_id', '?'))
+                    name = html.escape(str(s.get('name', s.get('user_id', '?'))), quote=False)
                     points = s.get('total_points', 0)
                     text += f"{i}. {name} — <b>{points} pts</b>\n"
             return bot.reply_to(message, text, parse_mode="HTML")
