@@ -3,6 +3,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database import db
 from tictactoe import (init_db, get_game, get_active_game, create_lobby, join_lobby,
     create_game_from_lobby, make_move, update_score, get_scores, get_global_scores,
+    cancel_game,
     build_lobby_markup, build_board_markup, build_game_over_markup,
     format_lobby_message, format_game_message, format_game_over_message,
     get_ttt_board_display)
@@ -3213,6 +3214,9 @@ def register_handlers(bot):
                     points = s.get('total_points', 0)
                     text += f"{i}. {name} — <b>{points} pts</b>\n"
             return bot.reply_to(message, text, parse_mode="HTML")
+        elif args[1] == 'cancel':
+            ok, msg = cancel_game(message.chat.id, message.from_user.id)
+            return bot.reply_to(message, msg)
         elif args[1] == 'global':
             scores = get_global_scores(20)
             text = "🌍 <b>Global Tic Tac Toe Leaderboard</b>\n\n"

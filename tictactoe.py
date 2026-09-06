@@ -22,7 +22,7 @@ __all__ = [
     'init_db', 'now', 'display_board', 'check_winner', 'is_draw',
     'get_game', 'get_active_game', 'create_lobby', 'join_lobby',
     'create_game_from_lobby', 'make_move', 'update_score',
-    'get_scores', 'get_global_scores',
+    'get_scores', 'get_global_scores', 'cancel_game',
     'build_lobby_markup', 'build_board_markup', 'build_game_over_markup',
     'format_lobby_message', 'format_game_message', 'format_game_over_message',
     'get_ttt_board_display'
@@ -143,7 +143,16 @@ def get_active_game(chat_id):
         c.execute("SELECT * FROM ttt_lobbies WHERE chat_id=? AND status='WAITING_FOR_PLAYER' ORDER BY created_at DESC LIMIT 1", (str(chat_id),))
         game = _row_to_dict(c, c.fetchone())
         if game:
-            return game
+            # Auto-purge expired lobbies so they never block /ttt forever
+            if game.get('expires_at') and game['expires_at'] < now():
+                try:
+                    c.execute("DELETE FROM ttt_lobbies WHERE game_id=?", (game['game_id'],))
+                    db.conn.commit()
+                except Exception:
+                    pass
+                game = None
+            else:
+                return game
         c.execute("SELECT * FROM ttt_games WHERE chat_id=? AND status='ACTIVE' ORDER BY created_at DESC LIMIT 1", (str(chat_id),))
         return _row_to_dict(c, c.fetchone())
     except Exception as e:
@@ -322,6 +331,39 @@ def update_score(chat_id, user_id, result):
         db.conn.commit()
     except Exception as e:
         logger.error(f"Update score error: {e}")
+
+def cancel_game(chat_id, user_id):
+    """Cancel a waiting lobby or active game.
+
+    Player 1 can cancel their lobby; players can cancel their active game.
+    Expired lobbies are purged automatically. Returns (ok, msg).
+    """
+    try:
+        c = db.conn.cursor()
+        c.execute("SELECT * FROM ttt_lobbies WHERE chat_id=? AND status='WAITING_FOR_PLAYER' ORDER BY created_at DESC LIMIT 1", (str(chat_id),))
+        lobby = _row_to_dict(c, c.fetchone())
+        if lobby:
+            if lobby.get('expires_at') and lobby['expires_at'] < now():
+                c.execute("DELETE FROM ttt_lobbies WHERE game_id=?", (lobby['game_id'],))
+                db.conn.commit()
+                return True, "🚫 Expired lobby cleared. Send /ttt to start a new game."
+            if str(lobby.get('player1_id')) == str(user_id):
+                c.execute("DELETE FROM ttt_lobbies WHERE game_id=?", (lobby['game_id'],))
+                db.conn.commit()
+                return True, "🚫 Lobby cancelled."
+            return False, "⚠️ Only Player 1 can cancel this lobby."
+        c.execute("SELECT * FROM ttt_games WHERE chat_id=? AND status='ACTIVE' ORDER BY created_at DESC LIMIT 1", (str(chat_id),))
+        game = _row_to_dict(c, c.fetchone())
+        if game:
+            if str(user_id) in (str(game.get('player1_id')), str(game.get('player2_id'))):
+                c.execute("DELETE FROM ttt_games WHERE game_id=?", (game['game_id'],))
+                db.conn.commit()
+                return True, "🚫 Game cancelled."
+            return False, "⚠️ Only players can cancel this game."
+        return False, "❌ No active game to cancel."
+    except Exception as e:
+        logger.error(f"Cancel game error: {e}")
+        return False, "❌ Error cancelling game."
 
 def get_scores(chat_id, limit=10):
     try:
