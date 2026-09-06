@@ -24,7 +24,7 @@ from datetime import timezone
 logger = logging.getLogger(__name__)
 
 try:
-    tictactoe._init_db()
+    tictactoe.init_db()
 except Exception:
     pass
 
@@ -3197,16 +3197,16 @@ def register_handlers(bot):
                     return bot.reply_to(message, "⚠️ A Tic Tac Toe game is already in progress.")
             player1_id = str(message.from_user.id)
             player1_name = message.from_user.first_name or "Unknown"
-            game_id = _create_lobby(message.chat.id, player1_id, player1_name)
+            game_id = create_lobby(message.chat.id, player1_id, player1_name)
             if not game_id:
                 return bot.reply_to(message, "❌ Error creating game.")
             markup = build_lobby_markup(game_id, message.chat.id)
             # Get lobby data for message formatting
-            lobby = _get_game(game_id)
+            lobby = get_game(game_id)
             text = format_lobby_message(lobby)
             bot.reply_to(message, text, reply_markup=markup, parse_mode="HTML")
         elif args[1] == 'rank':
-            scores = _get_scores(message.chat.id, 10)
+            scores = get_scores(message.chat.id, 10)
             text = "🏆 <b>Tic Tac Toe Leaderboard</b>\n\n"
             if not scores:
                 text += "No scores yet. Play a game!"
@@ -3217,7 +3217,7 @@ def register_handlers(bot):
                     text += f"{i}. {name} — <b>{points} pts</b>\n"
             return bot.reply_to(message, text, parse_mode="HTML")
         elif args[1] == 'global':
-            scores = _get_global_scores(20)
+            scores = get_global_scores(20)
             text = "🌍 <b>Global Tic Tac Toe Leaderboard</b>\n\n"
             if not scores:
                 text += "No scores yet!"
@@ -3237,16 +3237,16 @@ def register_handlers(bot):
                 game_id = parts[1]
                 chat_id = int(parts[2]) if len(parts) > 2 else None
                 if not chat_id:
-                    game = _get_game(game_id)
+                    game = get_game(game_id)
                     chat_id = int(game['chat_id']) if game else call.message.chat.id
                 player2_id = str(call.from_user.id)
                 player2_name = call.from_user.first_name or "Unknown"
-                ok, msg = _join_lobby(game_id, player2_id, player2_name)
+                ok, msg = join_lobby(game_id, player2_id, player2_name)
                 if not ok:
                     bot.answer_callback_query(call.id, msg)
                     return
-                _create_game_from_lobby(game_id)
-                game = _get_game(game_id)
+                create_game_from_lobby(game_id)
+                game = get_game(game_id)
                 markup = build_board_markup(game_id, game['board'])
                 text = format_game_message(game)
                 bot.edit_message_text(text, chat_id=chat_id, message_id=call.message.message_id, reply_markup=markup, parse_mode="HTML")
@@ -3254,11 +3254,11 @@ def register_handlers(bot):
             elif action == "ttt_move":
                 game_id = parts[1]
                 pos = int(parts[2])
-                game = _get_game(game_id)
+                game = get_game(game_id)
                 if not game:
                     bot.answer_callback_query(call.id, "Game not found.")
                     return
-                board, msg = _make_move(game_id, str(call.from_user.id), pos)
+                board, msg = make_move(game_id, str(call.from_user.id), pos)
                 if board is None:
                     bot.answer_callback_query(call.id, msg)
                     return
@@ -3269,11 +3269,11 @@ def register_handlers(bot):
                     markup = build_board_markup(game_id, game['board'])
                 text = format_game_message(game)
                 if status == 'PLAYER_X_WON':
-                    text = f"🏆 Player 1 (❌ {game['player1_name']}) wins!\n\n❌ {game['player1_name']} defeated ⭕ {game['player2_name']}\n\n{_display_board(game['board'])}"
+                    text = f"🏆 Player 1 (❌ {game['player1_name']}) wins!\n\n❌ {game['player1_name']} defeated ⭕ {game['player2_name']}\n\n{display_board(game['board'])}"
                 elif status == 'PLAYER_O_WON':
-                    text = f"🏆 Player 2 (⭕ {game['player2_name']}) wins!\n\n⭕ {game['player2_name']} defeated ❌ {game['player1_name']}\n\n{_display_board(game['board'])}"
+                    text = f"🏆 Player 2 (⭕ {game['player2_name']}) wins!\n\n⭕ {game['player2_name']} defeated ❌ {game['player1_name']}\n\n{display_board(game['board'])}"
                 elif status == 'DRAW':
-                    text = f"🤝 It's a Draw!\n\n{_display_board(game['board'])}"
+                    text = f"🤝 It's a Draw!\n\n{display_board(game['board'])}"
                 bot.edit_message_text(text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode="HTML")
                 bot.answer_callback_query(call.id)
             elif action == "ttt_disabled":
