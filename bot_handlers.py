@@ -2889,7 +2889,10 @@ def register_handlers(bot):
             return bot.reply_to(message, "Format: /send <message>")
         try:
             bot.send_message(message.chat.id, parts[1])
-            bot.delete_message(message.chat.id, message.message_id)
+            try:
+                bot.delete_message(message.chat.id, message.message_id)
+            except Exception:
+                pass  # Missing delete permission — message already sent, ignore
         except Exception as e:
             bot.reply_to(message, f"Error: {e}")
 
