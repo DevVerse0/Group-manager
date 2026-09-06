@@ -77,7 +77,7 @@ def _for_update():
     return " FOR UPDATE" if _is_pg() else ""
 
 def display_board(board):
-    symbols = {'X': '❌', 'O': '⭕', '.': '⬜'}
+    symbols = {'X': '❌', 'O': '⭕', '.': '✨'}
     rows = []
     for i in range(0, 9, 3):
         row = [symbols.get(board[i+j], str(i+j+1)) for j in range(3)]
@@ -305,9 +305,9 @@ def update_score(chat_id, user_id, result):
         c.execute("SELECT * FROM ttt_scores WHERE chat_id=? AND user_id=?", (str(chat_id), str(user_id)))
         score = _row_to_dict(c, c.fetchone())
         if not score:
-            c.execute("INSERT INTO ttt_scores (chat_id, user_id, games_played, wins, losses, draws, total_points) VALUES (?,?,0,0,0,0,0)", (str(chat_id), str(user_id)))
+            c.execute("INSERT INTO ttt_scores (chat_id, user_id, games_played, wins, losses, draws, total_points, consecutive_wins) VALUES (?,?,0,0,0,0,0,0)", (str(chat_id), str(user_id)))
             db.conn.commit()
-            return
+            score = {'games_played': 0, 'wins': 0, 'losses': 0, 'draws': 0, 'total_points': 0, 'consecutive_wins': 0}
         updates = {}
         if result == 'win':
             updates['wins'] = score['wins'] + 1
@@ -415,7 +415,7 @@ def build_board_markup(game_id, board):
             elif symbol == 'O':
                 emoji = '⭕'
             else:
-                emoji = str(pos + 1)
+                emoji = '✨'
             row.append(InlineKeyboardButton(emoji, callback_data=f"ttt_move:{game_id}:{pos}"))
         mk.row(*row)
     return mk
@@ -432,7 +432,7 @@ def build_game_over_markup(board):
             elif symbol == 'O':
                 emoji = '⭕'
             else:
-                emoji = '⬜'
+                emoji = '✨'
             row.append(InlineKeyboardButton(emoji, callback_data=f"ttt_disabled:{pos}"))
         mk.row(*row)
     return mk
@@ -443,10 +443,8 @@ def format_lobby_message(game):
     if not game:
         return "❌ Game not found. It may have expired — send /ttt to start a new one."
     p1 = game.get('player1_name') or 'Unknown'
-    p2 = game.get('player2_name') or 'Waiting...'
     return (f"❌ Tic Tac Toe ⭕\n\n"
-            f"👤 Player 1 (❌): {p1}\n"
-            f"👤 Player 2 (⭕): {p2}\n\n"
+            f"⚔️ {p1} vs ⏳ Waiting...\n\n"
             f"✨ Click below to join and play!")
 
 def format_game_message(game):
@@ -454,25 +452,26 @@ def format_game_message(game):
         return "❌ Game not found."
     p1 = game.get('player1_name') or 'Unknown'
     p2 = game.get('player2_name') or 'Unknown'
-    turn_emoji = '❌' if game['current_turn'] == 'X' else '⭕'
-    turn_name = p1 if game['current_turn'] == 'X' else p2
+    turn_emoji = '❌' if game.get('current_turn') == 'X' else '⭕'
+    turn_name = p1 if game.get('current_turn') == 'X' else p2
     return (f"❌ Tic Tac Toe ⭕\n\n"
-            f"👤 Player 1 (❌): {p1}\n"
-            f"👤 Player 2 (⭕): {p2}\n\n"
-            f"🎯 Turn: {turn_emoji} {turn_name}\n\n"
-            f"{display_board(game['board'])}")
+            f"⚔️ {p1} vs ⚔️ {p2}\n\n"
+            f"➡️ Turn: {turn_name} ({turn_emoji})")
 
 def format_game_over_message(game):
-    p1 = game['player1_name'] or 'Unknown'
-    p2 = game['player2_name'] or 'Unknown'
-    board = game['board']
+    if not game:
+        return "❌ Game not found."
+    p1 = game.get('player1_name') or 'Unknown'
+    p2 = game.get('player2_name') or 'Unknown'
+    board = game.get('board', '.........')
     winner = game.get('winner')
+    text = "❌ Tic Tac Toe ⭕\n\n"
     if winner == 'X':
-        text = f"🏆 Player 1 (❌ {p1}) wins!\n\n❌ {p1} defeated ⭕ {p2}\n\n"
+        text += f"🏆 {p1} (❌) wins!\n\n⚔️ {p1} defeated ⚔️ {p2}\n\n"
     elif winner == 'O':
-        text = f"🏆 Player 2 (⭕ {p2}) wins!\n\n⭕ {p2} defeated ❌ {p1}\n\n"
+        text += f"🏆 {p2} (⭕) wins!\n\n⚔️ {p2} defeated ⚔️ {p1}\n\n"
     else:
-        text = "🤝 It's a Draw!\n\n"
+        text += f"🤝 It's a Draw!\n\n⚔️ {p1} vs ⚔️ {p2}\n\n"
     text += display_board(board)
     return text
 

@@ -3276,15 +3276,10 @@ def register_handlers(bot):
                 status = game.get('status', 'ACTIVE')
                 if status in ('PLAYER_X_WON', 'PLAYER_O_WON', 'DRAW'):
                     markup = build_game_over_markup(game['board'])
+                    text = format_game_over_message(game)
                 else:
                     markup = build_board_markup(game_id, game['board'])
-                text = format_game_message(game)
-                if status == 'PLAYER_X_WON':
-                    text = f"🏆 Player 1 (❌ {game['player1_name']}) wins!\n\n❌ {game['player1_name']} defeated ⭕ {game['player2_name']}\n\n{display_board(game['board'])}"
-                elif status == 'PLAYER_O_WON':
-                    text = f"🏆 Player 2 (⭕ {game['player2_name']}) wins!\n\n⭕ {game['player2_name']} defeated ❌ {game['player1_name']}\n\n{display_board(game['board'])}"
-                elif status == 'DRAW':
-                    text = f"🤝 It's a Draw!\n\n{display_board(game['board'])}"
+                    text = format_game_message(game)
                 bot.edit_message_text(text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode="HTML")
                 bot.answer_callback_query(call.id)
             elif action == "ttt_disabled":
